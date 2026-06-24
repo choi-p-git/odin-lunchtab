@@ -18,3 +18,7 @@ def test_release_builder_detects_inno_setup_7() -> None:
 
     assert "Inno Setup 7\\ISCC.exe" in build_script
     assert "Inno Setup 6\\ISCC.exe" in build_script
+    assert '@("_tcl_data", "_tk_data")' in build_script
+    assert "Frozen bundle is missing required Tcl/Tk runtime data." in build_script
+    assert "ProductVersion" in build_script
+    assert "RELEASE_NOTES.md" in build_script

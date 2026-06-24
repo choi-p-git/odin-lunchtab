@@ -195,6 +195,12 @@ def test_responsive_windows_keep_primary_actions_mapped() -> None:
     root.update_idletasks()
     assert app.validate_button.winfo_ismapped()
     assert app.process_button.winfo_ismapped()
+    assert app.notebook.tab(0, "text") == "Odin Reconciliation"
+    assert app.notebook.tab(1, "text") == "InitialBalances Transfer"
+    app.notebook.select(1)
+    root.update_idletasks()
+    assert app.initial_validate_button.winfo_ismapped()
+    assert app.initial_process_button.winfo_ismapped()
     assert any(
         child.cget("text") == "Close" for child in manager.winfo_children()[-1].winfo_children()
     )

@@ -1,7 +1,7 @@
 [project]
 name = "odin-lunchtab"
-version = "0.3.0"
-description = "Transfer Odin Cloud POS account balances into a Lunchtab user export"
+version = "0.4.0"
+description = "Reconcile Odin balances and create audited Lunchtab InitialBalances imports"
 readme = "README.md"
 authors = [
     { name = "choi-p-git", email = "choi-p-git@gmail.com" }

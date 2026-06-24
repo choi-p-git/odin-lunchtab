@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ from odin_lunchtab.workflow import (
     OdinRecord,
     extract_odin_report,
     match_balances,
+    read_csv,
+    read_csv_with_metadata,
     run_workflow,
     split_student_name,
 )
@@ -40,6 +43,7 @@ def write_lunchtab(path: Path, rows: list[dict[str, str]]) -> None:
         "PreferredName",
         "Surname",
         "LoginBarcode",
+        "DefaultFamilyCode",
         "DefaultFamilyBalanceAmount",
         "ExtraColumn",
     ]
@@ -78,6 +82,7 @@ def user(
         "PreferredName": preferred_name,
         "Surname": surname,
         "LoginBarcode": barcode,
+        "DefaultFamilyCode": f"F-{barcode}",
         "DefaultFamilyBalanceAmount": "0",
         "ExtraColumn": "preserved",
     }
@@ -103,6 +108,66 @@ def test_extracts_only_complete_patron_rows_and_preserves_leading_zero_id(
     assert records[0].balance == "8.25"
     assert len(malformed) == 1
     assert malformed[0].reason == "missing one or more required Odin fields"
+
+
+@pytest.mark.parametrize(
+    ("encoding", "expected_label", "used_fallback"),
+    [
+        ("utf-8", "UTF-8", False),
+        ("utf-8-sig", "UTF-8 with BOM", False),
+        ("utf-16", "UTF-16 LE with BOM", False),
+        ("utf-16-be", "UTF-16 BE with BOM", False),
+        ("cp1252", "Windows-1252", True),
+    ],
+)
+def test_read_csv_accepts_supported_encodings(
+    tmp_path: Path,
+    encoding: str,
+    expected_label: str,
+    used_fallback: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = tmp_path / "export.csv"
+    text = "Name,Identifier,Amount\r\nAlaná,001,5\r\n"
+    if encoding == "utf-16-be":
+        path.write_bytes(b"\xfe\xff" + text.encode("utf-16-be"))
+    else:
+        path.write_bytes(text.encode(encoding))
+
+    with caplog.at_level(logging.INFO, logger="odin_lunchtab"):
+        headers, rows, metadata = read_csv_with_metadata(path)
+
+    assert headers == ["Name", "Identifier", "Amount"]
+    assert rows == [{"Name": "Alaná", "Identifier": "001", "Amount": "5"}]
+    assert metadata.encoding == expected_label
+    assert metadata.used_fallback is used_fallback
+    assert f"encoding={expected_label}" in caplog.text
+    assert f"fallback={used_fallback}" in caplog.text
+    assert str(path) not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (b"Name,Amount\r\nBad,\x81\r\n", "encoding is unsupported"),
+        ("Name,Amount\r\nBad,\ufffd\r\n".encode(), "replacement characters"),
+        (b"Name,Amount\r\nBad,\x00\r\n", "NUL bytes"),
+        (b"Name,Amount\r\nBad,\x07\r\n", "control characters"),
+        (b"\xff\xfe\x00\x00Name", "UTF-32"),
+        ("Name,Amount\r\nBad,5\r\n".encode("utf-16-le"), "NUL bytes"),
+        (b'Name,Amount\r\n"unterminated,5\r\n', "structure is malformed"),
+    ],
+)
+def test_read_csv_rejects_unsafe_or_unsupported_content(
+    tmp_path: Path,
+    content: bytes,
+    message: str,
+) -> None:
+    path = tmp_path / "unsafe.csv"
+    path.write_bytes(content)
+
+    with pytest.raises(ValueError, match=message):
+        read_csv(path)
 
 
 @pytest.mark.parametrize(
@@ -262,11 +327,13 @@ def test_end_to_end_writes_expected_files_columns_and_rows(tmp_path: Path) -> No
             "PreferredName",
             "Surname",
             "LoginBarcode",
+            "DefaultFamilyCode",
             "DefaultFamilyBalanceAmount",
             "OdinBalanceAmount",
             "ExtraColumn",
         ]
     assert len(rows) == 2
+    assert (output / FINAL_OUTPUT_NAME).read_bytes().startswith(b"\xef\xbb\xbf")
     assert rows[0]["OdinBalanceAmount"] == "6.5"
     assert rows[1]["OdinBalanceAmount"] == ""
     with (output / EXCEPTIONS_OUTPUT_NAME).open(encoding="utf-8-sig", newline="") as file:

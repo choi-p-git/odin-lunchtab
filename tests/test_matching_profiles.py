@@ -45,6 +45,7 @@ def user(
         "LoginBarcode": barcode,
         "ExternalId": external_id,
         "EmailAddress": email,
+        "DefaultFamilyCode": f"F-{barcode}",
         "DefaultFamilyBalanceAmount": "0",
     }
 
@@ -220,6 +221,7 @@ def write_sources(tmp_path: Path) -> tuple[Path, Path]:
                 "LoginBarcode",
                 "ExternalId",
                 "EmailAddress",
+                "DefaultFamilyCode",
                 "DefaultFamilyBalanceAmount",
             ],
         )

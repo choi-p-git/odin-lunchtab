@@ -41,6 +41,37 @@ balances, or absolute source paths.
 Diagnostic logs are stored under `%LOCALAPPDATA%\Odin Lunchtab\logs` and contain only
 operational events and summary counts.
 
+### InitialBalances transfer
+
+The **InitialBalances Transfer** tab performs the second stage after any manual
+reconciliation:
+
+1. Select the reconciled `Processed - Odin to Lunchtab Balance Transfer.csv`.
+2. Select the `InitialBalances...csv` downloaded from the Lunchtab transaction page.
+3. Validate, then choose **Transfer and audit**.
+
+The reconciled transfer must contain `DefaultFamilyCode` and `OdinBalanceAmount`.
+The InitialBalances export must contain exactly:
+
+```text
+FamilyName,FamilyCode,Amount
+```
+
+Populated Odin balances are aggregated by the case-sensitive family code and added to the
+existing Amount. Blank target amounts are treated as zero. Source rows with blank, invalid,
+unmatched, or duplicate required family codes block creation of the import file.
+
+Every run creates a timestamped results folder containing a family-level audit, an exception
+report, and `initial-balances-manifest.json`. A clean run also creates
+`Processed - {original InitialBalances filename}`. A blocked run deliberately omits that
+processed import while retaining the audit evidence needed for correction.
+
+CSV inputs support UTF-8 (with or without a BOM), Windows-1252, and BOM-marked UTF-16
+little- or big-endian files. Unsupported, ambiguous, or binary-looking files are rejected
+rather than decoded with replacement characters. Source files remain unchanged, and all
+generated CSV files use UTF-8 with a BOM for Windows and Excel compatibility. Run manifests
+record the detected encoding and whether the Windows-1252 fallback was used.
+
 ## Venue matching profiles
 
 The application starts with the protected **Legacy Default** profile, preserving the
@@ -148,6 +179,9 @@ The transfer CSV adds `OdinBalanceAmount` immediately after
 `DefaultFamilyBalanceAmount`. The manual-review report excludes `no Lunchtab match`
 records, which are likely legacy or closed accounts.
 
+The selected Lunchtab users export must also contain `DefaultFamilyCode`; this column is
+preserved in the transfer CSV for the InitialBalances stage.
+
 The match audit identifies the profile, rule, transformed identifier, and destination for
 each accepted balance. Matching metadata is not added to the Lunchtab import CSV. The
 manifest records the profile schema version and per-rule totals.
@@ -203,8 +237,12 @@ SHA-256 checksum and release notes to the trusted internal software location.
 Example checksum command:
 
 ```powershell
-Get-FileHash .\release\Odin-Lunchtab-Setup-0.3.0-x64.exe -Algorithm SHA256
+Get-FileHash .\release\Odin-Lunchtab-Setup-0.4.0-x64.exe -Algorithm SHA256
 ```
+
+The release script also copies the current notes to
+`release\RELEASE_NOTES-{version}.md`, verifies the executable version metadata, confirms
+that Tcl/Tk runtime data was collected, and prints the installer SHA-256.
 
 ## Release checklist
 
@@ -213,7 +251,7 @@ Before internal publication:
 1. Run the release build script.
 2. Test fresh installation and launch on clean Windows 10 and Windows 11 x64 systems.
 3. Confirm operation without Python or administrator rights.
-4. Test a normal run and a run containing manual-review exceptions.
+4. Test reconciliation, a clean InitialBalances transfer, and a blocked-exception run.
 5. Install the new version over the previous version.
 6. Uninstall and confirm that user result folders remain.
 7. Publish the installer, checksum, version, release notes, and this user guidance.

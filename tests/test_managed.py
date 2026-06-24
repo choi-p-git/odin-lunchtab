@@ -24,8 +24,15 @@ def write_odin(path: Path, rows: list[list[object]]) -> None:
     workbook.save(path)
 
 
-def write_lunchtab(path: Path, *, include_balance: bool = True) -> None:
+def write_lunchtab(
+    path: Path,
+    *,
+    include_balance: bool = True,
+    include_family_code: bool = True,
+) -> None:
     headers = ["FirstName", "PreferredName", "Surname", "LoginBarcode"]
+    if include_family_code:
+        headers.append("DefaultFamilyCode")
     if include_balance:
         headers.append("DefaultFamilyBalanceAmount")
     with path.open("w", encoding="utf-8-sig", newline="") as file:
@@ -37,6 +44,7 @@ def write_lunchtab(path: Path, *, include_balance: bool = True) -> None:
                 "PreferredName": "",
                 "Surname": "Smith",
                 "LoginBarcode": "001",
+                **({"DefaultFamilyCode": "F-001"} if include_family_code else {}),
                 **({"DefaultFamilyBalanceAmount": "0"} if include_balance else {}),
             }
         )
@@ -90,6 +98,16 @@ def test_inspect_inputs_rejects_missing_lunchtab_headers(tmp_path: Path) -> None
         inspect_inputs(odin, lunchtab)
 
 
+def test_inspect_inputs_requires_default_family_code(tmp_path: Path) -> None:
+    odin = tmp_path / "report.xlsx"
+    lunchtab = tmp_path / "users.csv"
+    write_odin(odin, [["Student Debit", "001", 10, 3, 7, "Smith, Ava"]])
+    write_lunchtab(lunchtab, include_family_code=False)
+
+    with pytest.raises(ValueError, match="DefaultFamilyCode"):
+        inspect_inputs(odin, lunchtab)
+
+
 def test_email_address_is_required_only_for_email_rules(tmp_path: Path) -> None:
     odin, lunchtab = source_files(tmp_path)
     inspect_inputs(odin, lunchtab)
@@ -135,7 +153,11 @@ def test_managed_run_publishes_complete_folder_and_private_manifest(tmp_path: Pa
     manifest = json.loads(manifest_text)
     assert manifest["inputs"] == {
         "odin": "Private Student Report.xlsx",
-        "lunchtab": "Lunchtab Users.csv",
+        "lunchtab": {
+            "name": "Lunchtab Users.csv",
+            "encoding": "UTF-8 with BOM",
+            "used_fallback": False,
+        },
     }
     assert str(tmp_path) not in manifest_text
     assert "Smith" not in manifest_text

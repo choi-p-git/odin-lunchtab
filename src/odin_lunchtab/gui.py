@@ -11,7 +11,16 @@ from typing import Callable
 
 from odin_lunchtab.app_logging import configure_logging
 from odin_lunchtab.desktop import friendly_error, open_path
-from odin_lunchtab.gui_controller import AppController, AppPhase
+from odin_lunchtab.gui_controller import (
+    AppController,
+    AppPhase,
+    InitialBalancesController,
+    InitialBalancesPhase,
+)
+from odin_lunchtab.initial_balances import (
+    inspect_initial_balances_inputs,
+    run_initial_balances_workflow,
+)
 from odin_lunchtab.managed import (
     ProfilePreview,
     default_output_root,
@@ -38,6 +47,7 @@ class BalanceTransferApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.controller = AppController(default_output_root())
+        self.initial_controller = InitialBalancesController(default_output_root())
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.logger = configure_logging()
         self.profiles = list_profiles()
@@ -55,12 +65,23 @@ class BalanceTransferApp:
         self.status_text = tk.StringVar(value=self.controller.state.message)
         self.details_text = tk.StringVar(value="")
         self.profile_text = tk.StringVar(value=self.controller.state.profile.name)
+        self.initial_transfer_text = tk.StringVar()
+        self.initial_balances_text = tk.StringVar()
+        self.initial_status_text = tk.StringVar(value=self.initial_controller.state.message)
+        self.initial_details_text = tk.StringVar()
         self._build()
         self._render()
         root.after(100, self._poll_events)
 
     def _build(self) -> None:
-        scroller = ScrollableFrame(self.root, padding=22)
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True)
+        reconciliation_tab = ttk.Frame(self.notebook)
+        initial_balances_tab = ttk.Frame(self.notebook)
+        self.notebook.add(reconciliation_tab, text="Odin Reconciliation")
+        self.notebook.add(initial_balances_tab, text="InitialBalances Transfer")
+
+        scroller = ScrollableFrame(reconciliation_tab, padding=22)
         scroller.pack(fill="both", expand=True)
         outer = scroller.content
 
@@ -185,6 +206,129 @@ class BalanceTransferApp:
             text="Source files are never changed. Results are saved in a new timestamped folder.",
             foreground="#555555",
         ).pack(anchor="w", pady=(14, 0))
+        self._build_initial_balances_tab(initial_balances_tab)
+
+    def _build_initial_balances_tab(self, parent: ttk.Frame) -> None:
+        scroller = ScrollableFrame(parent, padding=22)
+        scroller.pack(fill="both", expand=True)
+        outer = scroller.content
+        ttk.Label(
+            outer,
+            text="InitialBalances Transfer",
+            font=("Segoe UI", 18, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            outer,
+            text=(
+                "Aggregate reconciled Odin balances by family code and add them to a "
+                "Lunchtab InitialBalances export."
+            ),
+        ).pack(anchor="w", pady=(3, 20))
+
+        files = ttk.LabelFrame(outer, text="Source files", padding=14)
+        files.pack(fill="x")
+        files.columnconfigure(1, weight=1)
+        self._file_row(
+            files,
+            0,
+            "Reconciled transfer",
+            self.initial_transfer_text,
+            self._choose_initial_transfer,
+        )
+        self._file_row(
+            files,
+            1,
+            "InitialBalances",
+            self.initial_balances_text,
+            self._choose_initial_balances,
+        )
+        self._file_row(
+            files,
+            2,
+            "Save results in",
+            self.output_text,
+            self._choose_output,
+        )
+
+        actions = ttk.Frame(outer)
+        actions.pack(fill="x", pady=14)
+        self.initial_validate_button = ttk.Button(
+            actions,
+            text="Validate files",
+            command=self._start_initial_validation,
+        )
+        self.initial_process_button = ttk.Button(
+            actions,
+            text="Transfer and audit",
+            command=self._start_initial_processing,
+        )
+        self.initial_validate_button.grid(row=0, column=0, sticky="ew")
+        self.initial_process_button.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        actions.columnconfigure(0, weight=1)
+        actions.columnconfigure(1, weight=1)
+        self.initial_progress = ttk.Progressbar(actions, mode="indeterminate", length=180)
+        self.initial_progress.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+        results = ttk.LabelFrame(outer, text="Status and results", padding=14)
+        results.pack(fill="both", expand=True)
+        ttk.Label(
+            results,
+            textvariable=self.initial_status_text,
+            font=("Segoe UI", 11, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            results,
+            textvariable=self.initial_details_text,
+            justify="left",
+            wraplength=680,
+        ).pack(anchor="w", pady=(10, 14))
+        result_actions = ttk.Frame(results)
+        result_actions.pack(fill="x")
+        self.initial_open_folder_button = ttk.Button(
+            result_actions,
+            text="Open results folder",
+            command=lambda: self._open_initial_result("folder"),
+        )
+        self.initial_open_processed_button = ttk.Button(
+            result_actions,
+            text="Open processed CSV",
+            command=lambda: self._open_initial_result("processed"),
+        )
+        self.initial_open_audit_button = ttk.Button(
+            result_actions,
+            text="Open transfer audit",
+            command=lambda: self._open_initial_result("audit"),
+        )
+        self.initial_open_exceptions_button = ttk.Button(
+            result_actions,
+            text="Open exceptions",
+            command=lambda: self._open_initial_result("exceptions"),
+        )
+        for index, button in enumerate(
+            [
+                self.initial_open_folder_button,
+                self.initial_open_processed_button,
+                self.initial_open_audit_button,
+                self.initial_open_exceptions_button,
+            ]
+        ):
+            button.grid(
+                row=index // 2,
+                column=index % 2,
+                sticky="ew",
+                padx=(0 if index % 2 == 0 else 8, 0),
+                pady=(0 if index < 2 else 8, 0),
+            )
+        result_actions.columnconfigure(0, weight=1)
+        result_actions.columnconfigure(1, weight=1)
+        ttk.Label(
+            outer,
+            text=(
+                "Source files are never changed. Any integrity exception blocks the "
+                "processed import while preserving audit reports."
+            ),
+            foreground="#555555",
+        ).pack(anchor="w", pady=(14, 0))
 
     @staticmethod
     def _file_row(
@@ -225,6 +369,27 @@ class BalanceTransferApp:
         if selected:
             self.output_text.set(selected)
             self.controller.select_output_root(Path(selected))
+            self.initial_controller.select_output_root(Path(selected))
+            self._render()
+
+    def _choose_initial_transfer(self) -> None:
+        selected = filedialog.askopenfilename(
+            title="Select reconciled Odin-to-Lunchtab transfer",
+            filetypes=[("CSV files", "*.csv")],
+        )
+        if selected:
+            self.initial_transfer_text.set(selected)
+            self.initial_controller.select_transfer(Path(selected))
+            self._render()
+
+    def _choose_initial_balances(self) -> None:
+        selected = filedialog.askopenfilename(
+            title="Select Lunchtab InitialBalances export",
+            filetypes=[("CSV files", "*.csv")],
+        )
+        if selected:
+            self.initial_balances_text.set(selected)
+            self.initial_controller.select_initial_balances(Path(selected))
             self._render()
 
     def _select_profile(self, _: object | None = None) -> None:
@@ -255,13 +420,18 @@ class BalanceTransferApp:
             self.profile_text.set(self.profiles[0].name)
             self._select_profile()
 
-    def _run_worker(self, event_name: str, operation: Callable[[], object]) -> None:
+    def _run_worker(
+        self,
+        event_name: str,
+        operation: Callable[[], object],
+        error_event: str = "error",
+    ) -> None:
         def work() -> None:
             try:
                 self.events.put((event_name, operation()))
             except Exception as error:
                 self.logger.exception("%s failed: %s", event_name, type(error).__name__)
-                self.events.put(("error", error))
+                self.events.put((error_event, error))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -297,6 +467,31 @@ class BalanceTransferApp:
             ),
         )
 
+    def _start_initial_validation(self) -> None:
+        state = self.initial_controller.begin_validation()
+        self._render()
+        self._run_worker(
+            "initial_validated",
+            lambda: inspect_initial_balances_inputs(
+                state.transfer_path,  # type: ignore[arg-type]
+                state.initial_balances_path,  # type: ignore[arg-type]
+            ),
+            "initial_error",
+        )
+
+    def _start_initial_processing(self) -> None:
+        state = self.initial_controller.begin_processing()
+        self._render()
+        self._run_worker(
+            "initial_processed",
+            lambda: run_initial_balances_workflow(
+                transfer_path=state.transfer_path,  # type: ignore[arg-type]
+                initial_balances_path=state.initial_balances_path,  # type: ignore[arg-type]
+                output_root=state.output_root,  # type: ignore[arg-type]
+            ),
+            "initial_error",
+        )
+
     def _show_preview(self) -> None:
         if self.preview is None:
             messagebox.showinfo(
@@ -322,12 +517,54 @@ class BalanceTransferApp:
                         result.summary.matched_by_name,
                         result.summary.exceptions,
                     )
+                elif name == "initial_validated":
+                    self.initial_controller.validation_succeeded(payload)  # type: ignore[arg-type]
+                elif name == "initial_processed":
+                    self.initial_controller.processing_succeeded(payload)  # type: ignore[arg-type]
+                    result = self.initial_controller.state.result
+                    self.logger.info(
+                        "InitialBalances run completed: blocked=%s updated_families=%s "
+                        "exceptions=%s",
+                        result.summary.blocked,
+                        result.summary.updated_families,
+                        result.summary.exceptions,
+                    )
+                    if result.summary.blocked:
+                        messagebox.showwarning(
+                            APP_TITLE,
+                            "The processed import was blocked. Open the exception and audit "
+                            "reports, reconcile the source CSV, and run the transfer again.",
+                        )
+                    else:
+                        messagebox.showinfo(
+                            APP_TITLE,
+                            "InitialBalances transfer and integrity audit completed successfully.",
+                        )
+                elif name == "initial_error":
+                    self.initial_controller.failed(friendly_error(payload))  # type: ignore[arg-type]
                 else:
                     self.controller.failed(friendly_error(payload))  # type: ignore[arg-type]
                 self._render()
         except queue.Empty:
             pass
         self.root.after(100, self._poll_events)
+
+    def _open_initial_result(self, target: str) -> None:
+        result = self.initial_controller.state.result
+        if result is None:
+            return
+        targets = {
+            "folder": result.run_dir,
+            "processed": result.summary.output_paths.processed,
+            "audit": result.summary.output_paths.audit,
+            "exceptions": result.summary.output_paths.exceptions,
+        }
+        try:
+            path = targets[target]
+            if path is not None:
+                open_path(path)
+        except Exception as error:
+            messagebox.showerror(APP_TITLE, friendly_error(error))
 
     def _open_result(self, target: str) -> None:
         result = self.controller.state.result
@@ -392,6 +629,59 @@ class BalanceTransferApp:
         self.open_transfer_button.configure(state=result_state)
         self.open_review_button.configure(state=result_state)
         self.open_audit_button.configure(state=result_state)
+
+        initial_state = self.initial_controller.state
+        initial_busy = initial_state.phase in {
+            InitialBalancesPhase.VALIDATING,
+            InitialBalancesPhase.PROCESSING,
+        }
+        self.initial_validate_button.configure(
+            state="normal" if initial_state.can_validate else "disabled"
+        )
+        self.initial_process_button.configure(
+            state="normal" if initial_state.can_process else "disabled"
+        )
+        if initial_busy:
+            self.initial_progress.start(10)
+        else:
+            self.initial_progress.stop()
+        self.initial_status_text.set(initial_state.message)
+        if initial_state.result:
+            summary = initial_state.result.summary
+            blocked = (
+                "\n\nProcessed import: BLOCKED"
+                if summary.blocked
+                else "\n\nProcessed import: ready"
+            )
+            self.initial_details_text.set(
+                f"Populated transfer rows: {summary.populated_balance_rows}\n"
+                f"Matched source rows: {summary.matched_source_rows}\n"
+                f"Updated families: {summary.updated_families}\n"
+                f"Exceptions: {summary.exceptions}\n"
+                f"Applied total: {summary.applied_total}"
+                f"{blocked}\n\nSaved to: {initial_state.result.run_dir}"
+            )
+        elif initial_state.inspection:
+            inspection = initial_state.inspection
+            self.initial_details_text.set(
+                f"Transfer rows: {inspection.transfer_rows}\n"
+                f"Populated balance rows: {inspection.populated_balance_rows}\n"
+                f"InitialBalances rows: {inspection.initial_balance_rows}"
+            )
+        else:
+            self.initial_details_text.set("")
+        initial_result_state = "normal" if initial_state.result else "disabled"
+        self.initial_open_folder_button.configure(state=initial_result_state)
+        self.initial_open_audit_button.configure(state=initial_result_state)
+        self.initial_open_exceptions_button.configure(state=initial_result_state)
+        self.initial_open_processed_button.configure(
+            state=(
+                "normal"
+                if initial_state.result
+                and initial_state.result.summary.output_paths.processed is not None
+                else "disabled"
+            )
+        )
 
     def _update_wraplength(self, widget: tk.Misc, width: int) -> None:
         try:

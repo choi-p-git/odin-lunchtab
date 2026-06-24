@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import csv
+import io
+import logging
 import re
 import unicodedata
 from collections import Counter, defaultdict
@@ -66,6 +68,13 @@ MANUAL_REVIEW_EXCEPTIONS_OUTPUT_NAME = (
     "Manual Review Exceptions - Odin to Lunchtab Balance Transfer.csv"
 )
 MATCH_AUDIT_OUTPUT_NAME = "Accepted Match Audit - Odin to Lunchtab Balance Transfer.csv"
+LOGGER = logging.getLogger("odin_lunchtab")
+
+
+@dataclass(frozen=True)
+class CsvEncodingMetadata:
+    encoding: str
+    used_fallback: bool
 
 
 @dataclass(frozen=True)
@@ -271,12 +280,72 @@ def extract_odin_report(path: Path) -> tuple[list[OdinRecord], list[MalformedRec
     raise ValueError(f"Could not find the required Odin headers in {path}")
 
 
-def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
-    with path.open("r", encoding="utf-8-sig", newline="") as file:
-        reader = csv.DictReader(file)
+def _decode_csv_bytes(path: Path) -> tuple[str, CsvEncodingMetadata]:
+    data = path.read_bytes()
+    if data.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
+        raise ValueError("CSV uses unsupported UTF-32 encoding.")
+    if data.startswith(b"\xef\xbb\xbf"):
+        candidates = (("utf-8-sig", "UTF-8 with BOM", False),)
+    elif data.startswith(b"\xff\xfe"):
+        candidates = (("utf-16", "UTF-16 LE with BOM", False),)
+    elif data.startswith(b"\xfe\xff"):
+        candidates = (("utf-16", "UTF-16 BE with BOM", False),)
+    else:
+        if b"\x00" in data:
+            raise ValueError("CSV contains NUL bytes or unsupported UTF-16 without a BOM.")
+        candidates = (
+            ("utf-8", "UTF-8", False),
+            ("cp1252", "Windows-1252", True),
+        )
+
+    last_error: UnicodeDecodeError | None = None
+    for codec, label, used_fallback in candidates:
+        try:
+            text = data.decode(codec, errors="strict")
+            metadata = CsvEncodingMetadata(label, used_fallback)
+            LOGGER.info(
+                "CSV decoded: encoding=%s fallback=%s",
+                label,
+                used_fallback,
+            )
+            return text, metadata
+        except UnicodeDecodeError as error:
+            last_error = error
+    raise ValueError(
+        "CSV encoding is unsupported or contains invalid text. "
+        "Supported encodings are UTF-8, Windows-1252, and BOM-marked UTF-16."
+    ) from last_error
+
+
+def _validate_csv_text(text: str) -> None:
+    if "\ufffd" in text:
+        raise ValueError("CSV contains Unicode replacement characters and may be corrupted.")
+    unsafe = {
+        character
+        for character in text
+        if (ord(character) < 32 and character not in "\t\r\n") or 0x7F <= ord(character) <= 0x9F
+    }
+    if unsafe:
+        raise ValueError("CSV contains unsupported control characters or binary data.")
+
+
+def read_csv_with_metadata(
+    path: Path,
+) -> tuple[list[str], list[dict[str, str]], CsvEncodingMetadata]:
+    text, metadata = _decode_csv_bytes(path)
+    _validate_csv_text(text)
+    try:
+        reader = csv.DictReader(io.StringIO(text, newline=""), strict=True)
         if reader.fieldnames is None:
             raise ValueError(f"CSV has no header row: {path}")
-        return list(reader.fieldnames), list(reader)
+        return list(reader.fieldnames), list(reader), metadata
+    except csv.Error as error:
+        raise ValueError(f"CSV structure is malformed: {error}") from error
+
+
+def read_csv(path: Path) -> tuple[list[str], list[dict[str, str]]]:
+    headers, rows, _ = read_csv_with_metadata(path)
+    return headers, rows
 
 
 def _discover_odin(raw_data_dir: Path) -> Path:
@@ -703,7 +772,13 @@ def run_workflow(
 
     records, malformed = extract_odin_report(odin_path)
     lunchtab_headers, users = read_csv(lunchtab_path)
-    required_headers = {"FirstName", "PreferredName", "Surname", "LoginBarcode"}
+    required_headers = {
+        "FirstName",
+        "PreferredName",
+        "Surname",
+        "LoginBarcode",
+        "DefaultFamilyCode",
+    }
     missing = sorted(required_headers - set(lunchtab_headers))
     profile_fields = {
         "EmailAddress" if rule.target_field == "EmailUsername" else rule.target_field

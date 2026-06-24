@@ -21,6 +21,7 @@ from odin_lunchtab.workflow import (
     extract_odin_report,
     match_balances_detailed,
     read_csv,
+    read_csv_with_metadata,
     run_workflow,
 )
 
@@ -31,6 +32,7 @@ REQUIRED_LUNCHTAB_HEADERS = {
     "PreferredName",
     "Surname",
     "LoginBarcode",
+    "DefaultFamilyCode",
     "DefaultFamilyBalanceAmount",
 }
 
@@ -221,6 +223,7 @@ def _manifest(
 ) -> dict[str, object]:
     counts = asdict(summary)
     counts.pop("output_paths")
+    _, _, lunchtab_encoding = read_csv_with_metadata(lunchtab_path)
     return {
         "application": APP_NAME,
         "version": application_version(),
@@ -228,7 +231,11 @@ def _manifest(
         "completed_at": completed_at.astimezone().isoformat(),
         "inputs": {
             "odin": odin_path.name,
-            "lunchtab": lunchtab_path.name,
+            "lunchtab": {
+                "name": lunchtab_path.name,
+                "encoding": lunchtab_encoding.encoding,
+                "used_fallback": lunchtab_encoding.used_fallback,
+            },
         },
         "counts": counts,
         "matching_profile": {
