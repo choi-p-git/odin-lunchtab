@@ -66,6 +66,19 @@ report, and `initial-balances-manifest.json`. A clean run also creates
 `Processed - {original InitialBalances filename}`. A blocked run deliberately omits that
 processed import while retaining the audit evidence needed for correction.
 
+The completion counts describe different levels of aggregation:
+
+- **Populated transfer rows** counts source rows with an `OdinBalanceAmount`, including zero.
+- **Matched source rows** counts those source rows that safely resolved to InitialBalances.
+- **Updated families** counts unique `FamilyCode` destinations after family aggregation.
+- The audit contains one row per updated family; summing its `SourceRowCount` column should
+  equal **Matched source rows**.
+
+Multiple source rows can share one family, so updated families may be lower than matched
+source rows. A family with a net aggregate of zero is still counted as updated even though
+its target `Amount` does not change numerically. Control totals in the manifest and audit
+must agree before the processed import is published.
+
 CSV inputs support UTF-8 (with or without a BOM), Windows-1252, and BOM-marked UTF-16
 little- or big-endian files. Unsupported, ambiguous, or binary-looking files are rejected
 rather than decoded with replacement characters. Source files remain unchanged, and all

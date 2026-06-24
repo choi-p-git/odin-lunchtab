@@ -8,6 +8,8 @@
 - Blocks the import CSV when integrity exceptions are present while still publishing audit
   and exception reports.
 - Produces timestamped, atomic run folders with privacy-conscious manifests.
+- Reports populated source rows separately from unique updated families; the audit
+  `SourceRowCount` values reconcile the two totals when multiple rows share a family.
 
 ## Data compatibility and safeguards
 
