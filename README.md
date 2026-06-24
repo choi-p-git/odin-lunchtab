@@ -192,6 +192,7 @@ The per-user installer:
 - Requires no administrator access.
 - Installs beneath `%LOCALAPPDATA%\Programs\Odin Lunchtab`.
 - Creates a Start Menu shortcut.
+- Creates a Start Menu uninstall shortcut and a Windows **Installed apps** entry.
 - Offers an optional desktop shortcut.
 - Supports upgrades through its stable application ID.
 - Leaves user-created results intact during upgrades and uninstall.
@@ -216,3 +217,6 @@ Before internal publication:
 5. Install the new version over the previous version.
 6. Uninstall and confirm that user result folders remain.
 7. Publish the installer, checksum, version, release notes, and this user guidance.
+
+The application can be removed from **Settings > Apps > Installed apps** or from
+**Start > Odin to Lunchtab Balance Transfer > Uninstall Odin to Lunchtab Balance Transfer**.

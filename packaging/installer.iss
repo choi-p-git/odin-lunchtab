@@ -20,6 +20,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\release
 OutputBaseFilename=Odin-Lunchtab-Setup-{#AppVersion}-x64
 SetupIconFile=..\assets\app.ico
+Uninstallable=yes
+CreateUninstallRegKey=yes
+UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExeName}
 Compression=lzma2
 SolidCompression=yes
@@ -34,6 +37,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
+Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Run]

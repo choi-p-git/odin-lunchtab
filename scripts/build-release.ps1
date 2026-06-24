@@ -24,12 +24,14 @@ if (-not $SkipInstaller) {
     $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
     if (-not $iscc) {
         $standardPaths = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
             "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
             "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
         )
         $isccPath = $standardPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
         if (-not $isccPath) {
-            throw "Inno Setup Compiler (iscc.exe) was not found. Install Inno Setup or use -SkipInstaller."
+            throw "Inno Setup Compiler 6 or 7 (iscc.exe) was not found. Install Inno Setup or use -SkipInstaller."
         }
     } else {
         $isccPath = $iscc.Source
@@ -41,6 +43,16 @@ if (-not $SkipInstaller) {
     $installer = Join-Path $projectRoot "release\Odin-Lunchtab-Setup-$version-x64.exe"
     if (-not (Test-Path $installer)) {
         throw "Inno Setup did not produce the expected installer: $installer"
+    }
+    $installerDefinition = Get-Content "packaging\installer.iss" -Raw
+    foreach ($requiredSetting in @(
+        "Uninstallable=yes",
+        "CreateUninstallRegKey=yes",
+        'Filename: "{uninstallexe}"'
+    )) {
+        if (-not $installerDefinition.Contains($requiredSetting)) {
+            throw "Installer definition is missing required uninstall support: $requiredSetting"
+        }
     }
     $checksum = Get-FileHash $installer -Algorithm SHA256
     "$($checksum.Hash)  $($checksum.Path | Split-Path -Leaf)" |
