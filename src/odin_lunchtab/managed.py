@@ -215,6 +215,9 @@ def _rebased_paths(paths: OutputPaths, run_dir: Path) -> OutputPaths:
             run_dir / paths.audit_control.name if paths.audit_control is not None else None
         ),
         run_summary=(run_dir / paths.run_summary.name if paths.run_summary is not None else None),
+        candidate_matches=(
+            run_dir / paths.candidate_matches.name if paths.candidate_matches is not None else None
+        ),
     )
 
 

@@ -139,6 +139,7 @@ class OutputPaths:
     match_audit: Path | None = None
     audit_control: Path | None = None
     run_summary: Path | None = None
+    candidate_matches: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -397,6 +398,7 @@ def _output_paths(output_dir: Path, odin_path: Path) -> OutputPaths:
         match_audit=output_dir / MATCH_AUDIT_OUTPUT_NAME,
         audit_control=output_dir / RECONCILIATION_AUDIT_CONTROL_NAME,
         run_summary=output_dir / RECONCILIATION_RUN_SUMMARY_NAME,
+        candidate_matches=output_dir / "Manual Review Candidate Matches.csv",
     )
 
 
@@ -835,6 +837,13 @@ def run_workflow(
         paths.manual_review_exceptions,
         EXCEPTION_HEADERS,
         manual_review_exceptions,
+    )
+    from odin_lunchtab.exception_candidates import write_manual_review_candidate_report
+
+    write_manual_review_candidate_report(
+        manual_review_exceptions_path=paths.manual_review_exceptions,
+        lunchtab_path=lunchtab_path,
+        output_dir=output_dir,
     )
     if paths.match_audit is not None:
         _write_csv(

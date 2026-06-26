@@ -63,7 +63,7 @@ Documents\Odin Lunchtab Transfers
 Each successful run creates a new `YYYY-MM-DD_HHMMSS` folder. Results are first written to
 a private staging folder and published only after every report and the manifest succeed.
 The completion screen provides buttons to open the folder, transfer CSV, manual-review CSV,
-accepted-match audit, audit-control summary, and run summary.
+accepted-match audit, audit-control summary, candidate-match report, and run summary.
 
 The generated `run-manifest.json` records application version, timestamps, source
 filenames, source-file SHA-256 hashes, summary counts, generated filenames, and generated
@@ -274,6 +274,12 @@ matched dollars plus valid exception dollars.
 `Reconciliation Run Summary.md` provides a short operator-readable status page with the
 matching profile, key counts, important artifacts, and recommended next action before
 continuing to manual reconciliation or InitialBalances.
+
+`Manual Review Candidate Matches.csv` is an advisory helper for exception reconciliation.
+For each manual-review exception, it ranks possible LunchTab candidates using evidence such
+as ID/barcode matches, ExternalId matches, email usernames, surname matches, and
+first/preferred-name compatibility. It does not change the transfer file; staff should
+verify the evidence before manually editing `OdinBalanceAmount`.
 
 ### Manual reconciliation audit artifacts
 

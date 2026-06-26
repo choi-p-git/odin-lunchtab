@@ -199,6 +199,11 @@ class BalanceTransferApp:
             text="Open audit control",
             command=lambda: self._open_result("audit_control"),
         )
+        self.open_candidates_button = ttk.Button(
+            result_actions,
+            text="Open candidate matches",
+            command=lambda: self._open_result("candidate_matches"),
+        )
         self.open_run_summary_button = ttk.Button(
             result_actions,
             text="Open run summary",
@@ -211,6 +216,7 @@ class BalanceTransferApp:
                 self.open_review_button,
                 self.open_audit_button,
                 self.open_audit_control_button,
+                self.open_candidates_button,
                 self.open_run_summary_button,
             ]
         ):
@@ -804,6 +810,7 @@ class BalanceTransferApp:
             "review": result.summary.output_paths.manual_review_exceptions,
             "audit": result.summary.output_paths.match_audit,
             "audit_control": result.summary.output_paths.audit_control,
+            "candidate_matches": result.summary.output_paths.candidate_matches,
             "run_summary": result.summary.output_paths.run_summary,
         }
         try:
@@ -861,6 +868,7 @@ class BalanceTransferApp:
         self.open_review_button.configure(state=result_state)
         self.open_audit_button.configure(state=result_state)
         self.open_audit_control_button.configure(state=result_state)
+        self.open_candidates_button.configure(state=result_state)
         self.open_run_summary_button.configure(state=result_state)
 
         manual_state = self.manual_controller.state
