@@ -73,6 +73,22 @@ paths.
 Diagnostic logs are stored under `%LOCALAPPDATA%\Odin Lunchtab\logs` and contain only
 operational events and summary counts.
 
+### Manual reconciliation review
+
+The **Manual Reconciliation Review** tab supports the expected staff workflow where
+exception accounts are manually resolved after the automated Odin reconciliation:
+
+1. Select the original automated `Processed - Odin to Lunchtab Balance Transfer.csv`.
+2. Select the staff-edited copy of that same transfer CSV.
+3. Choose **Review edited transfer**.
+
+The review writes a timestamped result folder with a delta audit, short summary, and
+`manual-reconciliation-manifest.json`. Normal manual resolutions are rows where a
+previously blank `OdinBalanceAmount` was filled in. Changed automated balances, cleared
+automated balances, changed family codes, changed identity fields, and other non-balance
+edits are highlighted for audit review. Invalid manual amounts block downstream use until
+corrected.
+
 ### InitialBalances transfer
 
 The **InitialBalances Transfer** tab performs the second stage after any manual
@@ -80,7 +96,9 @@ reconciliation:
 
 1. Select the reconciled `Processed - Odin to Lunchtab Balance Transfer.csv`.
 2. Select the `InitialBalances...csv` downloaded from the Lunchtab transaction page.
-3. Validate, then choose **Transfer and audit**.
+3. Validate. Validation also runs a non-writing preflight preview showing whether the
+   transfer would be ready or blocked.
+4. Choose **Transfer and audit** when ready to create the formal timestamped result folder.
 
 The reconciled transfer must contain `DefaultFamilyCode` and `OdinBalanceAmount`.
 The InitialBalances export must contain exactly:
@@ -120,6 +138,10 @@ can inspect reasons without double-counting dollars.
 
 `InitialBalances Run Summary.md` provides a short operator-readable status page with the
 run status, key counts and totals, important artifacts, and recommended next action.
+
+The preflight preview is intentionally non-writing. It reports expected applied rows,
+updated families, exception counts, applied total, blocked total, and exception reasons
+before the operator creates a formal InitialBalances run.
 
 CSV inputs support UTF-8 (with or without a BOM), Windows-1252, and BOM-marked UTF-16
 little- or big-endian files. Unsupported, ambiguous, or binary-looking files are rejected
@@ -252,6 +274,21 @@ matched dollars plus valid exception dollars.
 `Reconciliation Run Summary.md` provides a short operator-readable status page with the
 matching profile, key counts, important artifacts, and recommended next action before
 continuing to manual reconciliation or InitialBalances.
+
+### Manual reconciliation audit artifacts
+
+When staff manually edit the reconciled transfer CSV to resolve exception accounts, the
+edited file should be audited before it is used for InitialBalances. The manual
+reconciliation audit compares the original automated transfer to the edited transfer and
+creates:
+
+- `Manual Reconciliation Delta Audit.csv`
+- `Manual Reconciliation Summary.md`
+
+The audit distinguishes normal manual resolutions, where a previously blank
+`OdinBalanceAmount` is filled in, from higher-risk edits such as changed automated balances,
+cleared automated balances, changed `DefaultFamilyCode` values, or changed LunchTab
+identity fields. Invalid manual amounts block downstream use until corrected.
 
 ## Tests and quality checks
 

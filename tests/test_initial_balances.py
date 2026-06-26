@@ -13,6 +13,7 @@ from odin_lunchtab.initial_balances import (
     AUDIT_OUTPUT_NAME,
     EXCEPTIONS_OUTPUT_NAME,
     inspect_initial_balances_inputs,
+    preflight_initial_balances_transfer,
     process_initial_balances,
     run_initial_balances_workflow,
 )
@@ -81,12 +82,20 @@ def test_process_aggregates_adds_and_preserves_target_rows(tmp_path: Path) -> No
         ],
     )
 
+    preflight = preflight_initial_balances_transfer(transfer, initial)
     summary = process_initial_balances(
         transfer_path=transfer,
         initial_balances_path=initial,
         output_dir=output,
     )
 
+    assert not preflight.blocked
+    assert preflight.matched_source_rows == 3
+    assert preflight.updated_families == 2
+    assert preflight.exceptions == 0
+    assert preflight.source_total == "1.50"
+    assert preflight.applied_total == "1.50"
+    assert preflight.blocked_total == "0"
     assert not summary.blocked
     assert summary.populated_balance_rows == 3
     assert summary.matched_source_rows == 3
@@ -214,12 +223,24 @@ def test_initial_balances_audit_control_reports_blocked_balances_without_double_
         ],
     )
 
+    preflight = preflight_initial_balances_transfer(transfer, initial)
     summary = process_initial_balances(
         transfer_path=transfer,
         initial_balances_path=initial,
         output_dir=output,
     )
 
+    assert preflight.blocked
+    assert preflight.exceptions == 4
+    assert preflight.source_total == "10"
+    assert preflight.applied_total == "0"
+    assert preflight.blocked_total == "10"
+    assert preflight.exception_reasons == {
+        "duplicate FamilyCode in InitialBalances": 1,
+        "invalid OdinBalanceAmount": 1,
+        "invalid target Amount": 1,
+        "populated balance has blank DefaultFamilyCode": 1,
+    }
     assert summary.blocked
     assert summary.audit_control_status == "PASS"
     _, control_rows = read_rows(output / INITIAL_BALANCES_AUDIT_CONTROL_NAME)

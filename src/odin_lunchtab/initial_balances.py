@@ -50,6 +50,23 @@ class InitialBalancesInspection:
 
 
 @dataclass(frozen=True)
+class InitialBalancesPreflight:
+    transfer_rows: int
+    populated_balance_rows: int
+    target_rows: int
+    matched_source_rows: int
+    updated_families: int
+    exceptions: int
+    source_total: str
+    applied_total: str
+    blocked_total: str
+    original_matched_total: str
+    final_matched_total: str
+    blocked: bool
+    exception_reasons: dict[str, int]
+
+
+@dataclass(frozen=True)
 class InitialBalancesOutputPaths:
     processed: Path | None
     audit: Path
@@ -80,6 +97,21 @@ class InitialBalancesRunResult:
     run_dir: Path
     summary: InitialBalancesSummary
     manifest_path: Path
+
+
+@dataclass(frozen=True)
+class _InitialBalancesAnalysis:
+    inspection: InitialBalancesInspection
+    transfer_rows: list[dict[str, str]]
+    target_headers: list[str]
+    output_rows: list[dict[str, str]]
+    audit_rows: list[dict[str, str]]
+    exceptions: list[dict[str, str]]
+    source_total: Decimal
+    original_total: Decimal
+    final_total: Decimal
+    applied_total: Decimal
+    preflight: InitialBalancesPreflight
 
 
 def _decimal(value: str, *, blank_as_zero: bool = False) -> Decimal:
@@ -168,12 +200,10 @@ def _audit_generated_file(
         raise RuntimeError("Generated InitialBalances rows failed the integrity audit.")
 
 
-def process_initial_balances(
-    *,
+def _analyze_initial_balances(
     transfer_path: Path,
     initial_balances_path: Path,
-    output_dir: Path,
-) -> InitialBalancesSummary:
+) -> _InitialBalancesAnalysis:
     inspection = inspect_initial_balances_inputs(transfer_path, initial_balances_path)
     _, transfer_rows = read_csv(transfer_path)
     target_headers, target_rows = read_csv(initial_balances_path)
@@ -181,6 +211,7 @@ def process_initial_balances(
     amounts_by_code: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
     source_counts: Counter[str] = Counter()
     source_total = Decimal("0")
+    blank_code_total = Decimal("0")
 
     for row_number, row in enumerate(transfer_rows, start=2):
         raw_amount = row.get("OdinBalanceAmount") or ""
@@ -188,6 +219,20 @@ def process_initial_balances(
             continue
         code = (row.get("DefaultFamilyCode") or "").strip()
         if not code:
+            try:
+                amount = _decimal(raw_amount)
+            except ValueError:
+                exceptions.append(
+                    _exception(
+                        "invalid OdinBalanceAmount",
+                        "reconciled transfer",
+                        row_number,
+                        "",
+                        raw_amount,
+                    )
+                )
+                continue
+            blank_code_total += amount
             exceptions.append(
                 _exception(
                     "populated balance has blank DefaultFamilyCode",
@@ -264,6 +309,7 @@ def process_initial_balances(
     original_total = Decimal("0")
     final_total = Decimal("0")
     applied_total = Decimal("0")
+    blocked_total = blank_code_total
     updated_families = 0
     blocked_codes = {row["FamilyCode"] for row in exceptions if row["FamilyCode"]}
 
@@ -283,6 +329,7 @@ def process_initial_balances(
             original = Decimal("0")
             final = Decimal("0")
             status = "blocked"
+            blocked_total += amount
         audit_rows.append(
             {
                 "FamilyCode": code,
@@ -295,6 +342,68 @@ def process_initial_balances(
         )
 
     blocked = bool(exceptions)
+    matched_source_rows = sum(
+        source_counts[code]
+        for code in amounts_by_code
+        if len(target_indexes.get(code, [])) == 1 and code not in blocked_codes
+    )
+    preflight = InitialBalancesPreflight(
+        transfer_rows=inspection.transfer_rows,
+        populated_balance_rows=inspection.populated_balance_rows,
+        target_rows=inspection.initial_balance_rows,
+        matched_source_rows=matched_source_rows,
+        updated_families=updated_families,
+        exceptions=len(exceptions),
+        source_total=_decimal_text(source_total + blank_code_total),
+        applied_total=_decimal_text(applied_total),
+        blocked_total=_decimal_text(blocked_total),
+        original_matched_total=_decimal_text(original_total),
+        final_matched_total=_decimal_text(final_total),
+        blocked=blocked,
+        exception_reasons=dict(sorted(Counter(row["Reason"] for row in exceptions).items())),
+    )
+    return _InitialBalancesAnalysis(
+        inspection=inspection,
+        transfer_rows=transfer_rows,
+        target_headers=target_headers,
+        output_rows=output_rows,
+        audit_rows=audit_rows,
+        exceptions=exceptions,
+        source_total=source_total,
+        original_total=original_total,
+        final_total=final_total,
+        applied_total=applied_total,
+        preflight=preflight,
+    )
+
+
+def preflight_initial_balances_transfer(
+    transfer_path: Path,
+    initial_balances_path: Path,
+) -> InitialBalancesPreflight:
+    return _analyze_initial_balances(transfer_path, initial_balances_path).preflight
+
+
+def process_initial_balances(
+    *,
+    transfer_path: Path,
+    initial_balances_path: Path,
+    output_dir: Path,
+) -> InitialBalancesSummary:
+    analysis = _analyze_initial_balances(transfer_path, initial_balances_path)
+    inspection = analysis.inspection
+    target_headers = analysis.target_headers
+    output_rows = analysis.output_rows
+    audit_rows = analysis.audit_rows
+    exceptions = analysis.exceptions
+    preflight = analysis.preflight
+    source_total = analysis.source_total
+    applied_total = analysis.applied_total
+    original_total = analysis.original_total
+    final_total = analysis.final_total
+    blocked = preflight.blocked
+    updated_families = preflight.updated_families
+    matched_source_rows = preflight.matched_source_rows
     if not blocked:
         if applied_total != source_total or final_total - original_total != source_total:
             raise RuntimeError("InitialBalances control totals failed the integrity audit.")
@@ -309,7 +418,7 @@ def process_initial_balances(
     _write_csv(exceptions_path, EXCEPTION_HEADERS, exceptions)
     audit_control_status = write_initial_balances_audit_control(
         path=audit_control_path,
-        transfer_rows=transfer_rows,
+        transfer_rows=analysis.transfer_rows,
         family_audit_rows=audit_rows,
         exceptions=exceptions,
         transfer_name=transfer_path.name,
@@ -328,11 +437,7 @@ def process_initial_balances(
         path=run_summary_path,
         blocked=blocked,
         populated_balance_rows=inspection.populated_balance_rows,
-        matched_source_rows=sum(
-            source_counts[code]
-            for code in amounts_by_code
-            if len(target_indexes.get(code, [])) == 1 and code not in blocked_codes
-        ),
+        matched_source_rows=matched_source_rows,
         updated_families=updated_families,
         exceptions=len(exceptions),
         source_total=_decimal_text(source_total),
@@ -350,11 +455,7 @@ def process_initial_balances(
         transfer_rows=inspection.transfer_rows,
         populated_balance_rows=inspection.populated_balance_rows,
         target_rows=inspection.initial_balance_rows,
-        matched_source_rows=sum(
-            source_counts[code]
-            for code in amounts_by_code
-            if len(target_indexes.get(code, [])) == 1 and code not in blocked_codes
-        ),
+        matched_source_rows=matched_source_rows,
         updated_families=updated_families,
         exceptions=len(exceptions),
         source_total=_decimal_text(source_total),
