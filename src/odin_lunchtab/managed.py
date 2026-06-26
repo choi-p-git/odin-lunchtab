@@ -210,6 +210,9 @@ def _rebased_paths(paths: OutputPaths, run_dir: Path) -> OutputPaths:
         exceptions=run_dir / paths.exceptions.name,
         manual_review_exceptions=run_dir / paths.manual_review_exceptions.name,
         match_audit=(run_dir / paths.match_audit.name if paths.match_audit is not None else None),
+        audit_control=(
+            run_dir / paths.audit_control.name if paths.audit_control is not None else None
+        ),
     )
 
 
@@ -242,6 +245,14 @@ def _manifest(
             "name": summary.profile_name,
             "schema_version": summary.profile_schema_version,
             "matches_by_rule": summary.matches_by_rule or {},
+        },
+        "audit_control": {
+            "status": summary.audit_control_status,
+            "report": (
+                summary.output_paths.audit_control.name
+                if summary.output_paths.audit_control is not None
+                else None
+            ),
         },
         "generated_files": [
             path.name for path in asdict(summary.output_paths).values() if path is not None

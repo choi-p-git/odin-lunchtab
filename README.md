@@ -62,7 +62,7 @@ existing Amount. Blank target amounts are treated as zero. Source rows with blan
 unmatched, or duplicate required family codes block creation of the import file.
 
 Every run creates a timestamped results folder containing a family-level audit, an exception
-report, and `initial-balances-manifest.json`. A clean run also creates
+report, an audit-control summary, and `initial-balances-manifest.json`. A clean run also creates
 `Processed - {original InitialBalances filename}`. A blocked run deliberately omits that
 processed import while retaining the audit evidence needed for correction.
 
@@ -78,6 +78,12 @@ Multiple source rows can share one family, so updated families may be lower than
 source rows. A family with a net aggregate of zero is still counted as updated even though
 its target `Amount` does not change numerically. Control totals in the manifest and audit
 must agree before the processed import is published.
+
+`InitialBalances Audit Control Summary.csv` provides the operator-facing traceability
+ledger. It separates applied balances, blocked balances, exception reason counts, invalid
+or excluded source amounts, and control-total pass/fail rows. Blocked balances are reported
+once per affected family code, even when multiple exception reasons apply, so manual review
+can inspect reasons without double-counting dollars.
 
 CSV inputs support UTF-8 (with or without a BOM), Windows-1252, and BOM-marked UTF-16
 little- or big-endian files. Unsupported, ambiguous, or binary-looking files are rejected
@@ -186,6 +192,7 @@ The workflow writes:
 - A complete exceptions CSV.
 - `Manual Review Exceptions - Odin to Lunchtab Balance Transfer.csv`.
 - `Accepted Match Audit - Odin to Lunchtab Balance Transfer.csv`.
+- `Reconciliation Audit Control Summary.csv`.
 - `run-manifest.json` for desktop managed runs.
 
 The transfer CSV adds `OdinBalanceAmount` immediately after
@@ -195,9 +202,15 @@ records, which are likely legacy or closed accounts.
 The selected Lunchtab users export must also contain `DefaultFamilyCode`; this column is
 preserved in the transfer CSV for the InitialBalances stage.
 
-The match audit identifies the profile, rule, transformed identifier, and destination for
-each accepted balance. Matching metadata is not added to the Lunchtab import CSV. The
-manifest records the profile schema version and per-rule totals.
+The match audit identifies the profile, rule, transformed identifier, destination, and
+accepted `OdinBalanceAmount` for each accepted balance. Matching metadata is not added to
+the Lunchtab import CSV. The manifest records the profile schema version, per-rule totals,
+audit-control status, and audit-control report filename.
+
+`Reconciliation Audit Control Summary.csv` summarizes valid Odin source balances, accepted
+matches by method and rule, exceptions by reason, malformed or unparseable rows excluded
+from dollar controls, and a pass/fail row verifying that valid Odin source dollars equal
+matched dollars plus valid exception dollars.
 
 ## Tests and quality checks
 

@@ -11,6 +11,10 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Callable
 
+from odin_lunchtab.audit_control import (
+    INITIAL_BALANCES_AUDIT_CONTROL_NAME,
+    write_initial_balances_audit_control,
+)
 from odin_lunchtab.managed import application_version, choose_run_dir
 from odin_lunchtab.workflow import read_csv, read_csv_with_metadata
 
@@ -44,6 +48,7 @@ class InitialBalancesOutputPaths:
     processed: Path | None
     audit: Path
     exceptions: Path
+    audit_control: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,7 @@ class InitialBalancesSummary:
     applied_total: str
     blocked: bool
     output_paths: InitialBalancesOutputPaths
+    audit_control_status: str = "PASS"
 
 
 @dataclass(frozen=True)
@@ -290,8 +296,20 @@ def process_initial_balances(
     processed_path = output_dir / f"Processed - {initial_balances_path.name}"
     audit_path = output_dir / AUDIT_OUTPUT_NAME
     exceptions_path = output_dir / EXCEPTIONS_OUTPUT_NAME
+    audit_control_path = output_dir / INITIAL_BALANCES_AUDIT_CONTROL_NAME
     _write_csv(audit_path, AUDIT_HEADERS, audit_rows)
     _write_csv(exceptions_path, EXCEPTION_HEADERS, exceptions)
+    audit_control_status = write_initial_balances_audit_control(
+        path=audit_control_path,
+        transfer_rows=transfer_rows,
+        family_audit_rows=audit_rows,
+        exceptions=exceptions,
+        transfer_name=transfer_path.name,
+        family_audit_name=audit_path.name,
+        exceptions_name=exceptions_path.name,
+    )
+    if audit_control_status != "PASS":
+        raise RuntimeError("InitialBalances audit-control totals failed the integrity audit.")
     if blocked:
         processed: Path | None = None
     else:
@@ -315,7 +333,13 @@ def process_initial_balances(
         final_matched_total=_decimal_text(final_total),
         applied_total=_decimal_text(applied_total),
         blocked=blocked,
-        output_paths=InitialBalancesOutputPaths(processed, audit_path, exceptions_path),
+        output_paths=InitialBalancesOutputPaths(
+            processed,
+            audit_path,
+            exceptions_path,
+            audit_control_path,
+        ),
+        audit_control_status=audit_control_status,
     )
 
 
@@ -350,6 +374,14 @@ def _manifest(
             },
         },
         "summary": counts,
+        "audit_control": {
+            "status": summary.audit_control_status,
+            "report": (
+                summary.output_paths.audit_control.name
+                if summary.output_paths.audit_control is not None
+                else None
+            ),
+        },
         "generated_files": [
             path.name for path in asdict(summary.output_paths).values() if path is not None
         ],
@@ -403,6 +435,11 @@ def run_initial_balances_workflow(
         ),
         audit=run_dir / summary.output_paths.audit.name,
         exceptions=run_dir / summary.output_paths.exceptions.name,
+        audit_control=(
+            run_dir / summary.output_paths.audit_control.name
+            if summary.output_paths.audit_control is not None
+            else None
+        ),
     )
     rebased = replace(summary, output_paths=output_paths)
     return InitialBalancesRunResult(

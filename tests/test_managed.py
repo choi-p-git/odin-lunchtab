@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from openpyxl import Workbook
 
+from odin_lunchtab.audit_control import RECONCILIATION_AUDIT_CONTROL_NAME
 from odin_lunchtab import managed
 from odin_lunchtab.managed import choose_run_dir, inspect_inputs, run_managed_workflow
 from odin_lunchtab.profiles import MatchingProfile, MatchingRule
@@ -147,6 +148,8 @@ def test_managed_run_publishes_complete_folder_and_private_manifest(tmp_path: Pa
 
     assert result.run_dir.name == "2026-06-23_201530"
     assert result.summary.output_paths.transfer.is_file()
+    assert result.summary.output_paths.audit_control is not None
+    assert result.summary.output_paths.audit_control.is_file()
     assert result.manifest_path.is_file()
     assert not list(output_root.glob(".staging-*"))
     manifest_text = result.manifest_path.read_text(encoding="utf-8")
@@ -165,6 +168,10 @@ def test_managed_run_publishes_complete_folder_and_private_manifest(tmp_path: Pa
     assert manifest["counts"]["matched_by_id"] == 1
     assert manifest["matching_profile"]["name"] == "Legacy Default"
     assert "Exact LoginBarcode" not in manifest["matching_profile"]["matches_by_rule"]
+    assert manifest["audit_control"] == {
+        "status": "PASS",
+        "report": RECONCILIATION_AUDIT_CONTROL_NAME,
+    }
 
 
 def test_managed_run_removes_staging_folder_after_failure(
