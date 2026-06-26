@@ -12,6 +12,7 @@ from odin_lunchtab.audit_control import RECONCILIATION_AUDIT_CONTROL_NAME
 from odin_lunchtab import managed
 from odin_lunchtab.managed import choose_run_dir, inspect_inputs, run_managed_workflow
 from odin_lunchtab.profiles import MatchingProfile, MatchingRule
+from odin_lunchtab.run_reports import RECONCILIATION_RUN_SUMMARY_NAME
 
 
 def write_odin(path: Path, rows: list[list[object]]) -> None:
@@ -150,6 +151,8 @@ def test_managed_run_publishes_complete_folder_and_private_manifest(tmp_path: Pa
     assert result.summary.output_paths.transfer.is_file()
     assert result.summary.output_paths.audit_control is not None
     assert result.summary.output_paths.audit_control.is_file()
+    assert result.summary.output_paths.run_summary is not None
+    assert result.summary.output_paths.run_summary.is_file()
     assert result.manifest_path.is_file()
     assert not list(output_root.glob(".staging-*"))
     manifest_text = result.manifest_path.read_text(encoding="utf-8")
@@ -172,6 +175,13 @@ def test_managed_run_publishes_complete_folder_and_private_manifest(tmp_path: Pa
         "status": "PASS",
         "report": RECONCILIATION_AUDIT_CONTROL_NAME,
     }
+    assert manifest["input_hashes"]["odin"]["name"] == "Private Student Report.xlsx"
+    assert len(manifest["input_hashes"]["odin"]["sha256"]) == 64
+    assert RECONCILIATION_RUN_SUMMARY_NAME in manifest["generated_files"]
+    assert any(
+        item["name"] == RECONCILIATION_RUN_SUMMARY_NAME and len(item["sha256"]) == 64
+        for item in manifest["generated_artifact_hashes"]
+    )
 
 
 def test_managed_run_removes_staging_folder_after_failure(

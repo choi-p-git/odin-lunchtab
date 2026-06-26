@@ -32,11 +32,12 @@ Documents\Odin Lunchtab Transfers
 Each successful run creates a new `YYYY-MM-DD_HHMMSS` folder. Results are first written to
 a private staging folder and published only after every report and the manifest succeed.
 The completion screen provides buttons to open the folder, transfer CSV, manual-review CSV,
-and accepted-match audit.
+accepted-match audit, audit-control summary, and run summary.
 
 The generated `run-manifest.json` records application version, timestamps, source
-filenames, summary counts, and generated filenames. It does not contain student rows,
-balances, or absolute source paths.
+filenames, source-file SHA-256 hashes, summary counts, generated filenames, and generated
+artifact SHA-256 hashes. It does not contain student rows, balances, or absolute source
+paths.
 
 Diagnostic logs are stored under `%LOCALAPPDATA%\Odin Lunchtab\logs` and contain only
 operational events and summary counts.
@@ -62,9 +63,10 @@ existing Amount. Blank target amounts are treated as zero. Source rows with blan
 unmatched, or duplicate required family codes block creation of the import file.
 
 Every run creates a timestamped results folder containing a family-level audit, an exception
-report, an audit-control summary, and `initial-balances-manifest.json`. A clean run also creates
-`Processed - {original InitialBalances filename}`. A blocked run deliberately omits that
-processed import while retaining the audit evidence needed for correction.
+report, an audit-control summary, a run summary, and `initial-balances-manifest.json`. A
+clean run also creates `Processed - {original InitialBalances filename}`. A blocked run
+deliberately omits that processed import while retaining the audit evidence needed for
+correction.
 
 The completion counts describe different levels of aggregation:
 
@@ -84,6 +86,9 @@ ledger. It separates applied balances, blocked balances, exception reason counts
 or excluded source amounts, and control-total pass/fail rows. Blocked balances are reported
 once per affected family code, even when multiple exception reasons apply, so manual review
 can inspect reasons without double-counting dollars.
+
+`InitialBalances Run Summary.md` provides a short operator-readable status page with the
+run status, key counts and totals, important artifacts, and recommended next action.
 
 CSV inputs support UTF-8 (with or without a BOM), Windows-1252, and BOM-marked UTF-16
 little- or big-endian files. Unsupported, ambiguous, or binary-looking files are rejected
@@ -193,6 +198,7 @@ The workflow writes:
 - `Manual Review Exceptions - Odin to Lunchtab Balance Transfer.csv`.
 - `Accepted Match Audit - Odin to Lunchtab Balance Transfer.csv`.
 - `Reconciliation Audit Control Summary.csv`.
+- `Reconciliation Run Summary.md`.
 - `run-manifest.json` for desktop managed runs.
 
 The transfer CSV adds `OdinBalanceAmount` immediately after
@@ -211,6 +217,10 @@ audit-control status, and audit-control report filename.
 matches by method and rule, exceptions by reason, malformed or unparseable rows excluded
 from dollar controls, and a pass/fail row verifying that valid Odin source dollars equal
 matched dollars plus valid exception dollars.
+
+`Reconciliation Run Summary.md` provides a short operator-readable status page with the
+matching profile, key counts, important artifacts, and recommended next action before
+continuing to manual reconciliation or InitialBalances.
 
 ## Tests and quality checks
 

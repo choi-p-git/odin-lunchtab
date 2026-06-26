@@ -22,6 +22,7 @@ from odin_lunchtab.workflow import (
     split_student_name,
 )
 from odin_lunchtab.audit_control import RECONCILIATION_AUDIT_CONTROL_NAME
+from odin_lunchtab.run_reports import RECONCILIATION_RUN_SUMMARY_NAME
 
 
 def write_odin(path: Path, rows: list[list[object]]) -> None:
@@ -386,6 +387,13 @@ def test_reconciliation_audit_control_reconciles_matched_exceptions_and_malforme
     assert summary.audit_control_status == "PASS"
     control_path = output / RECONCILIATION_AUDIT_CONTROL_NAME
     assert summary.output_paths.audit_control == control_path
+    assert summary.output_paths.run_summary == output / RECONCILIATION_RUN_SUMMARY_NAME
+    assert summary.output_paths.run_summary.is_file()
+    summary_text = summary.output_paths.run_summary.read_text(encoding="utf-8")
+    assert "Audit-control status: PASS" in summary_text
+    assert (
+        "Review `Manual Review Exceptions - Odin to Lunchtab Balance Transfer.csv`" in summary_text
+    )
     with control_path.open(encoding="utf-8-sig", newline="") as file:
         rows = list(csv.DictReader(file))
 

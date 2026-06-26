@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from odin_lunchtab.audit_control import INITIAL_BALANCES_AUDIT_CONTROL_NAME
+from odin_lunchtab.run_reports import INITIAL_BALANCES_RUN_SUMMARY_NAME
 from odin_lunchtab.initial_balances import (
     AUDIT_OUTPUT_NAME,
     EXCEPTIONS_OUTPUT_NAME,
@@ -95,6 +96,11 @@ def test_process_aggregates_adds_and_preserves_target_rows(tmp_path: Path) -> No
     assert summary.output_paths.processed == output / "Processed - InitialBalances.csv"
     assert summary.audit_control_status == "PASS"
     assert summary.output_paths.audit_control == output / INITIAL_BALANCES_AUDIT_CONTROL_NAME
+    assert summary.output_paths.run_summary == output / INITIAL_BALANCES_RUN_SUMMARY_NAME
+    assert summary.output_paths.run_summary.is_file()
+    summary_text = summary.output_paths.run_summary.read_text(encoding="utf-8")
+    assert "Run status: READY" in summary_text
+    assert "Audit-control status: PASS" in summary_text
     headers, rows = read_rows(summary.output_paths.processed)
     assert headers == ["FamilyName", "FamilyCode", "Amount"]
     assert [row["Amount"] for row in rows] == ["11.50", "0", "4.25"]
@@ -279,6 +285,8 @@ def test_managed_run_publishes_clean_or_blocked_run_atomically(tmp_path: Path) -
     assert result.summary.output_paths.processed.is_file()
     assert result.summary.output_paths.audit_control is not None
     assert result.summary.output_paths.audit_control.is_file()
+    assert result.summary.output_paths.run_summary is not None
+    assert result.summary.output_paths.run_summary.is_file()
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["inputs"] == {
         "reconciled_transfer": {
@@ -296,6 +304,13 @@ def test_managed_run_publishes_clean_or_blocked_run_atomically(tmp_path: Path) -
         "status": "PASS",
         "report": INITIAL_BALANCES_AUDIT_CONTROL_NAME,
     }
+    assert manifest["input_hashes"]["reconciled_transfer"]["name"] == "transfer.csv"
+    assert len(manifest["input_hashes"]["reconciled_transfer"]["sha256"]) == 64
+    assert INITIAL_BALANCES_RUN_SUMMARY_NAME in manifest["generated_files"]
+    assert any(
+        item["name"] == INITIAL_BALANCES_RUN_SUMMARY_NAME and len(item["sha256"]) == 64
+        for item in manifest["generated_artifact_hashes"]
+    )
     assert "001" not in result.manifest_path.read_text(encoding="utf-8")
     assert result.summary.output_paths.processed.read_bytes().startswith(b"\xef\xbb\xbf")
     assert not list(results.glob(".staging-*"))

@@ -16,6 +16,12 @@ from odin_lunchtab.audit_control import (
     write_initial_balances_audit_control,
 )
 from odin_lunchtab.managed import application_version, choose_run_dir
+from odin_lunchtab.run_reports import (
+    INITIAL_BALANCES_RUN_SUMMARY_NAME,
+    artifact_hashes,
+    sha256_file,
+    write_initial_balances_run_summary,
+)
 from odin_lunchtab.workflow import read_csv, read_csv_with_metadata
 
 TRANSFER_HEADERS = {"DefaultFamilyCode", "OdinBalanceAmount"}
@@ -49,6 +55,7 @@ class InitialBalancesOutputPaths:
     audit: Path
     exceptions: Path
     audit_control: Path | None = None
+    run_summary: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -297,6 +304,7 @@ def process_initial_balances(
     audit_path = output_dir / AUDIT_OUTPUT_NAME
     exceptions_path = output_dir / EXCEPTIONS_OUTPUT_NAME
     audit_control_path = output_dir / INITIAL_BALANCES_AUDIT_CONTROL_NAME
+    run_summary_path = output_dir / INITIAL_BALANCES_RUN_SUMMARY_NAME
     _write_csv(audit_path, AUDIT_HEADERS, audit_rows)
     _write_csv(exceptions_path, EXCEPTION_HEADERS, exceptions)
     audit_control_status = write_initial_balances_audit_control(
@@ -316,6 +324,27 @@ def process_initial_balances(
         _write_csv(processed_path, target_headers, output_rows)
         _audit_generated_file(processed_path, output_rows, target_headers)
         processed = processed_path
+    write_initial_balances_run_summary(
+        path=run_summary_path,
+        blocked=blocked,
+        populated_balance_rows=inspection.populated_balance_rows,
+        matched_source_rows=sum(
+            source_counts[code]
+            for code in amounts_by_code
+            if len(target_indexes.get(code, [])) == 1 and code not in blocked_codes
+        ),
+        updated_families=updated_families,
+        exceptions=len(exceptions),
+        source_total=_decimal_text(source_total),
+        applied_total=_decimal_text(applied_total),
+        original_matched_total=_decimal_text(original_total),
+        final_matched_total=_decimal_text(final_total),
+        audit_control_status=audit_control_status,
+        audit_control_name=audit_control_path.name,
+        audit_name=audit_path.name,
+        exceptions_name=exceptions_path.name,
+        processed_name=processed.name if processed is not None else None,
+    )
 
     return InitialBalancesSummary(
         transfer_rows=inspection.transfer_rows,
@@ -338,6 +367,7 @@ def process_initial_balances(
             audit_path,
             exceptions_path,
             audit_control_path,
+            run_summary_path,
         ),
         audit_control_status=audit_control_status,
     )
@@ -373,6 +403,16 @@ def _manifest(
                 "used_fallback": initial_encoding.used_fallback,
             },
         },
+        "input_hashes": {
+            "reconciled_transfer": {
+                "name": transfer_path.name,
+                "sha256": sha256_file(transfer_path),
+            },
+            "initial_balances": {
+                "name": initial_balances_path.name,
+                "sha256": sha256_file(initial_balances_path),
+            },
+        },
         "summary": counts,
         "audit_control": {
             "status": summary.audit_control_status,
@@ -385,6 +425,9 @@ def _manifest(
         "generated_files": [
             path.name for path in asdict(summary.output_paths).values() if path is not None
         ],
+        "generated_artifact_hashes": artifact_hashes(
+            [path for path in asdict(summary.output_paths).values() if path is not None]
+        ),
     }
 
 
@@ -438,6 +481,11 @@ def run_initial_balances_workflow(
         audit_control=(
             run_dir / summary.output_paths.audit_control.name
             if summary.output_paths.audit_control is not None
+            else None
+        ),
+        run_summary=(
+            run_dir / summary.output_paths.run_summary.name
+            if summary.output_paths.run_summary is not None
             else None
         ),
     )

@@ -183,12 +183,24 @@ class BalanceTransferApp:
             text="Open match audit",
             command=lambda: self._open_result("audit"),
         )
+        self.open_audit_control_button = ttk.Button(
+            result_actions,
+            text="Open audit control",
+            command=lambda: self._open_result("audit_control"),
+        )
+        self.open_run_summary_button = ttk.Button(
+            result_actions,
+            text="Open run summary",
+            command=lambda: self._open_result("run_summary"),
+        )
         for index, button in enumerate(
             [
                 self.open_folder_button,
                 self.open_transfer_button,
                 self.open_review_button,
                 self.open_audit_button,
+                self.open_audit_control_button,
+                self.open_run_summary_button,
             ]
         ):
             button.grid(
@@ -304,12 +316,24 @@ class BalanceTransferApp:
             text="Open exceptions",
             command=lambda: self._open_initial_result("exceptions"),
         )
+        self.initial_open_audit_control_button = ttk.Button(
+            result_actions,
+            text="Open audit control",
+            command=lambda: self._open_initial_result("audit_control"),
+        )
+        self.initial_open_run_summary_button = ttk.Button(
+            result_actions,
+            text="Open run summary",
+            command=lambda: self._open_initial_result("run_summary"),
+        )
         for index, button in enumerate(
             [
                 self.initial_open_folder_button,
                 self.initial_open_processed_button,
                 self.initial_open_audit_button,
                 self.initial_open_exceptions_button,
+                self.initial_open_audit_control_button,
+                self.initial_open_run_summary_button,
             ]
         ):
             button.grid(
@@ -558,6 +582,8 @@ class BalanceTransferApp:
             "processed": result.summary.output_paths.processed,
             "audit": result.summary.output_paths.audit,
             "exceptions": result.summary.output_paths.exceptions,
+            "audit_control": result.summary.output_paths.audit_control,
+            "run_summary": result.summary.output_paths.run_summary,
         }
         try:
             path = targets[target]
@@ -575,6 +601,8 @@ class BalanceTransferApp:
             "transfer": result.summary.output_paths.transfer,
             "review": result.summary.output_paths.manual_review_exceptions,
             "audit": result.summary.output_paths.match_audit,
+            "audit_control": result.summary.output_paths.audit_control,
+            "run_summary": result.summary.output_paths.run_summary,
         }
         try:
             path = targets[target]
@@ -611,6 +639,7 @@ class BalanceTransferApp:
                 f"Matching profile: {summary.profile_name}\n"
                 f"All exceptions: {summary.exceptions}\n"
                 f"Malformed Odin rows: {summary.malformed}\n"
+                f"Audit-control status: {summary.audit_control_status}\n"
                 f"Lunchtab output rows: {summary.lunchtab_rows}"
                 f"{warning}\n\nSaved to: {state.result.run_dir}"
             )
@@ -629,6 +658,8 @@ class BalanceTransferApp:
         self.open_transfer_button.configure(state=result_state)
         self.open_review_button.configure(state=result_state)
         self.open_audit_button.configure(state=result_state)
+        self.open_audit_control_button.configure(state=result_state)
+        self.open_run_summary_button.configure(state=result_state)
 
         initial_state = self.initial_controller.state
         initial_busy = initial_state.phase in {
@@ -658,6 +689,7 @@ class BalanceTransferApp:
                 f"Matched source rows: {summary.matched_source_rows}\n"
                 f"Updated families: {summary.updated_families}\n"
                 f"Exceptions: {summary.exceptions}\n"
+                f"Audit-control status: {summary.audit_control_status}\n"
                 f"Applied total: {summary.applied_total}"
                 f"{blocked}\n\nSaved to: {initial_state.result.run_dir}"
             )
@@ -674,6 +706,8 @@ class BalanceTransferApp:
         self.initial_open_folder_button.configure(state=initial_result_state)
         self.initial_open_audit_button.configure(state=initial_result_state)
         self.initial_open_exceptions_button.configure(state=initial_result_state)
+        self.initial_open_audit_control_button.configure(state=initial_result_state)
+        self.initial_open_run_summary_button.configure(state=initial_result_state)
         self.initial_open_processed_button.configure(
             state=(
                 "normal"

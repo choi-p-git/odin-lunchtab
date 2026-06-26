@@ -23,6 +23,10 @@ from odin_lunchtab.profiles import (
     MatchingProfile,
     parse_email_address,
 )
+from odin_lunchtab.run_reports import (
+    RECONCILIATION_RUN_SUMMARY_NAME,
+    write_reconciliation_run_summary,
+)
 
 ODIN_HEADERS = (
     "Account Type",
@@ -134,6 +138,7 @@ class OutputPaths:
     manual_review_exceptions: Path
     match_audit: Path | None = None
     audit_control: Path | None = None
+    run_summary: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -391,6 +396,7 @@ def _output_paths(output_dir: Path, odin_path: Path) -> OutputPaths:
         manual_review_exceptions=output_dir / MANUAL_REVIEW_EXCEPTIONS_OUTPUT_NAME,
         match_audit=output_dir / MATCH_AUDIT_OUTPUT_NAME,
         audit_control=output_dir / RECONCILIATION_AUDIT_CONTROL_NAME,
+        run_summary=output_dir / RECONCILIATION_RUN_SUMMARY_NAME,
     )
 
 
@@ -853,6 +859,23 @@ def run_workflow(
         )
         if audit_control_status != "PASS":
             raise RuntimeError("Reconciliation audit-control totals failed the integrity audit.")
+    if paths.run_summary is not None and paths.audit_control is not None:
+        write_reconciliation_run_summary(
+            path=paths.run_summary,
+            profile_name=profile.name,
+            valid_odin_rows=len(records),
+            malformed_rows=len(malformed),
+            matched_by_id=counts["id"] + counts["rule"] + counts["crosswalk"],
+            matched_by_name=counts["name"],
+            exceptions=len(exceptions),
+            manual_review_exceptions=len(manual_review_exceptions),
+            lunchtab_rows=len(users),
+            audit_control_status=audit_control_status,
+            audit_control_name=paths.audit_control.name,
+            manual_review_name=paths.manual_review_exceptions.name,
+            exceptions_name=paths.exceptions.name,
+            transfer_name=paths.transfer.name,
+        )
 
     return RunSummary(
         extracted=len(records),
