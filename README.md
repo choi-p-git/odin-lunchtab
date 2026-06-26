@@ -16,6 +16,37 @@ uv sync --locked
 uv run odin-lunchtab-gui
 ```
 
+## Sandbox data generator
+
+For non-live testing, launch the separate sandbox utility:
+
+```powershell
+uv run odin-lunchtab-sandbox
+```
+
+The sandbox app creates deterministic synthetic test packs containing:
+
+- `Sandbox Odin Account Balance Report.xlsx`
+- `Sandbox Lunchtab Users.csv`
+- `Sandbox InitialBalances.csv`
+- `Sandbox Expected Summary.json`
+- `sandbox-manifest.json`
+
+Use the preset selector for clean baseline data, reconciliation exceptions, malformed Odin
+rows, InitialBalances blockers, or a mixed stress set. Row counts, identifier conventions,
+family grouping, balance ranges, exception volumes, output folder, and random seed can be
+edited before generation.
+
+Identifier conventions are configured separately for Odin IDs, LunchTab login barcodes, and
+LunchTab family codes. Family codes can use their own prefix, starting number, and padding
+so they can model venue exports where the family-code digits are unrelated to Odin IDs.
+
+Choose **Generate + Verify** to immediately run the generated files through the production
+reconciliation and InitialBalances workflows. Verification results are written under the
+generated sandbox run folder. The generated data uses synthetic names, identifiers, email
+addresses under `sandbox.invalid`, family codes, and balances; it should not contain live
+student or family data.
+
 The user selects:
 
 1. The Odin `.xlsx` account balance report.
