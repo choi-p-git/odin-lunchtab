@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
 from odin_lunchtab.app_logging import configure_logging
+from odin_lunchtab.candidate_viewer_gui import CandidateMatchesWindow
 from odin_lunchtab.desktop import friendly_error, open_path
 from odin_lunchtab.gui_controller import (
     AppController,
@@ -782,7 +783,10 @@ class BalanceTransferApp:
         try:
             path = targets[target]
             if path is not None:
-                open_path(path)
+                if target == "candidate_matches":
+                    CandidateMatchesWindow(self.root, path)
+                else:
+                    open_path(path)
         except Exception as error:
             messagebox.showerror(APP_TITLE, friendly_error(error))
 

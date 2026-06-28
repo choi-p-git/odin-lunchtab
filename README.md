@@ -278,8 +278,10 @@ continuing to manual reconciliation or InitialBalances.
 `Manual Review Candidate Matches.csv` is an advisory helper for exception reconciliation.
 For each manual-review exception, it ranks possible LunchTab candidates using evidence such
 as ID/barcode matches, ExternalId matches, email usernames, surname matches, and
-first/preferred-name compatibility. It does not change the transfer file; staff should
-verify the evidence before manually editing `OdinBalanceAmount`.
+first/preferred-name compatibility. The desktop app's **Open candidate matches** button
+opens a searchable viewer with a confidence filter and copyable evidence details. It does
+not change the transfer file; staff should verify the evidence before manually editing
+`OdinBalanceAmount`.
 
 ### Manual reconciliation audit artifacts
 
