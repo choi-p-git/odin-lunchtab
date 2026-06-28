@@ -20,6 +20,10 @@ class CandidateMatchRow:
     family_code: str
     candidate_name: str
     email: str
+    transfer_row_number: str
+    transfer_current_balance: str
+    suggested_balance: str
+    transfer_trace_status: str
     score: str
     evidence: str
     source_artifact: str
@@ -39,6 +43,10 @@ class CandidateMatchRow:
                 self.family_code,
                 self.candidate_name,
                 self.email,
+                self.transfer_row_number,
+                self.transfer_current_balance,
+                self.suggested_balance,
+                self.transfer_trace_status,
                 self.score,
                 self.evidence,
                 self.notes,
@@ -62,6 +70,11 @@ class CandidateMatchRow:
                 f"ExternalId: {self.external_id}",
                 f"FamilyCode: {self.family_code}",
                 f"EmailAddress: {self.email}",
+                "",
+                f"Transfer RowNumber: {self.transfer_row_number}",
+                f"Transfer Current OdinBalanceAmount: {self.transfer_current_balance}",
+                f"Suggested OdinBalanceAmount: {self.suggested_balance}",
+                f"Transfer TraceStatus: {self.transfer_trace_status}",
                 "",
                 f"Evidence: {self.evidence}",
                 f"Source artifact: {self.source_artifact}",
@@ -88,6 +101,10 @@ def load_candidate_match_rows(path: Path) -> list[CandidateMatchRow]:
             family_code=row.get("Candidate FamilyCode", ""),
             candidate_name=row.get("Candidate Name", ""),
             email=row.get("Candidate EmailAddress", ""),
+            transfer_row_number=row.get("Transfer RowNumber", ""),
+            transfer_current_balance=row.get("Transfer Current OdinBalanceAmount", ""),
+            suggested_balance=row.get("Suggested OdinBalanceAmount", ""),
+            transfer_trace_status=row.get("Transfer TraceStatus", ""),
             score=row.get("Score", ""),
             evidence=row.get("Evidence", ""),
             source_artifact=row.get("SourceArtifact", ""),

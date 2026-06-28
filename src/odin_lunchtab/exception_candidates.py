@@ -25,6 +25,10 @@ CANDIDATE_HEADERS = [
     "Candidate FamilyCode",
     "Candidate Name",
     "Candidate EmailAddress",
+    "Transfer RowNumber",
+    "Transfer Current OdinBalanceAmount",
+    "Suggested OdinBalanceAmount",
+    "Transfer TraceStatus",
     "Score",
     "Evidence",
     "SourceArtifact",
@@ -38,6 +42,7 @@ REQUIRED_LUNCHTAB_HEADERS = {
     "LoginBarcode",
     "DefaultFamilyCode",
 }
+REQUIRED_TRANSFER_HEADERS = {"LoginBarcode", "OdinBalanceAmount"}
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,13 @@ class _ScoredCandidate:
     score: int
     evidence: tuple[str, ...]
     user: dict[str, str]
+
+
+@dataclass(frozen=True)
+class _TransferTrace:
+    row_number: str
+    current_balance: str
+    status: str
 
 
 def _split_candidate_barcodes(value: str) -> set[str]:
@@ -153,6 +165,7 @@ def _candidate_row(
     candidate: _ScoredCandidate,
     rank: int,
     source_artifact: Path,
+    transfer_trace: _TransferTrace,
 ) -> dict[str, str]:
     user = candidate.user
     return {
@@ -167,6 +180,10 @@ def _candidate_row(
         "Candidate FamilyCode": user.get("DefaultFamilyCode", ""),
         "Candidate Name": _candidate_name(user),
         "Candidate EmailAddress": user.get("EmailAddress", ""),
+        "Transfer RowNumber": transfer_trace.row_number,
+        "Transfer Current OdinBalanceAmount": transfer_trace.current_balance,
+        "Suggested OdinBalanceAmount": exception.get("Balance", ""),
+        "Transfer TraceStatus": transfer_trace.status,
         "Score": str(candidate.score),
         "Evidence": " | ".join(candidate.evidence),
         "SourceArtifact": source_artifact.name,
@@ -174,11 +191,51 @@ def _candidate_row(
     }
 
 
+def _transfer_index(
+    transfer_path: Path | None,
+) -> dict[str, list[tuple[int, dict[str, str]]]] | None:
+    if transfer_path is None:
+        return None
+    headers, rows = read_csv(transfer_path)
+    missing = sorted(REQUIRED_TRANSFER_HEADERS - set(headers))
+    if missing:
+        raise ValueError("Transfer CSV is missing required columns: " + ", ".join(missing))
+    index: dict[str, list[tuple[int, dict[str, str]]]] = {}
+    for offset, row in enumerate(rows, start=2):
+        barcode = row.get("LoginBarcode", "").strip()
+        if barcode:
+            index.setdefault(barcode, []).append((offset, row))
+    return index
+
+
+def _transfer_trace(
+    candidate: _ScoredCandidate,
+    transfer_rows_by_barcode: dict[str, list[tuple[int, dict[str, str]]]] | None,
+) -> _TransferTrace:
+    if transfer_rows_by_barcode is None:
+        return _TransferTrace("", "", "not requested")
+    barcode = candidate.user.get("LoginBarcode", "").strip()
+    if not barcode:
+        return _TransferTrace("", "", "candidate has blank LoginBarcode")
+    matches = transfer_rows_by_barcode.get(barcode, [])
+    if not matches:
+        return _TransferTrace("", "", "candidate not found in transfer")
+    if len(matches) > 1:
+        return _TransferTrace("", "", "duplicate LoginBarcode in transfer")
+    row_number, row = matches[0]
+    return _TransferTrace(
+        str(row_number),
+        row.get("OdinBalanceAmount", ""),
+        "found unique transfer row",
+    )
+
+
 def write_manual_review_candidate_report(
     *,
     manual_review_exceptions_path: Path,
     lunchtab_path: Path,
     output_dir: Path,
+    transfer_path: Path | None = None,
     max_candidates_per_exception: int = 5,
 ) -> CandidateReportSummary:
     exception_headers, exceptions = read_csv(manual_review_exceptions_path)
@@ -194,6 +251,7 @@ def write_manual_review_candidate_report(
         raise ValueError("Lunchtab CSV is missing required columns: " + ", ".join(missing_lunchtab))
     if max_candidates_per_exception < 1:
         raise ValueError("max_candidates_per_exception must be at least 1.")
+    transfer_rows_by_barcode = _transfer_index(transfer_path)
 
     candidate_rows: list[dict[str, str]] = []
     exceptions_with_candidates = 0
@@ -230,6 +288,7 @@ def write_manual_review_candidate_report(
                     candidate=candidate,
                     rank=rank,
                     source_artifact=manual_review_exceptions_path,
+                    transfer_trace=_transfer_trace(candidate, transfer_rows_by_barcode),
                 )
             )
 

@@ -40,6 +40,10 @@ def candidate_row(
         "Candidate FamilyCode": f"F-{barcode}",
         "Candidate Name": candidate_name,
         "Candidate EmailAddress": f"{barcode}@sandbox.invalid",
+        "Transfer RowNumber": "7",
+        "Transfer Current OdinBalanceAmount": "",
+        "Suggested OdinBalanceAmount": "12.25",
+        "Transfer TraceStatus": "found unique transfer row",
         "Score": "95" if confidence == "High" else "75",
         "Evidence": evidence,
         "SourceArtifact": "Manual Review Exceptions.csv",
@@ -77,6 +81,7 @@ def test_candidate_viewer_loads_and_filters_rows(tmp_path: Path) -> None:
     assert filter_candidate_match_rows(rows, query="ellie preferred") == [rows[0]]
     assert filter_candidate_match_rows(rows, confidence="Medium") == [rows[1]]
     assert filter_candidate_match_rows(rows, query="garcia", confidence="High") == [rows[0]]
+    assert filter_candidate_match_rows(rows, query="row") == rows
 
 
 def test_candidate_viewer_detail_text_contains_copyable_audit_context(
@@ -100,6 +105,8 @@ def test_candidate_viewer_detail_text_contains_copyable_audit_context(
 
     assert "Odin Student: Garcia, Ellie" in row.detail_text
     assert "LoginBarcode: 100" in row.detail_text
+    assert "Transfer RowNumber: 7" in row.detail_text
+    assert "Suggested OdinBalanceAmount: 12.25" in row.detail_text
     assert "Evidence: preferred name matches" in row.detail_text
 
 

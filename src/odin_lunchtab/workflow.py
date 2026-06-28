@@ -844,6 +844,7 @@ def run_workflow(
         manual_review_exceptions_path=paths.manual_review_exceptions,
         lunchtab_path=lunchtab_path,
         output_dir=output_dir,
+        transfer_path=paths.transfer,
     )
     if paths.match_audit is not None:
         _write_csv(

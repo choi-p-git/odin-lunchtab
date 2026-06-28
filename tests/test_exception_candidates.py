@@ -89,6 +89,23 @@ def exception_row(
     }
 
 
+def transfer_row(
+    barcode: str,
+    *,
+    balance: str = "",
+    family_code: str | None = None,
+) -> dict[str, str]:
+    return {
+        "FirstName": "Elizabeth",
+        "PreferredName": "Ellie",
+        "Surname": "Garcia",
+        "LoginBarcode": barcode,
+        "DefaultFamilyCode": family_code or f"F-{barcode}",
+        "DefaultFamilyBalanceAmount": "0",
+        "OdinBalanceAmount": balance,
+    }
+
+
 def test_candidate_report_ranks_preferred_name_and_identifier_evidence(
     tmp_path: Path,
 ) -> None:
@@ -123,6 +140,49 @@ def test_candidate_report_ranks_preferred_name_and_identifier_evidence(
     assert "LoginBarcode equals Odin ID" in rows[0]["Evidence"]
     assert "preferred name matches" in rows[0]["Evidence"]
     assert rows[1]["Candidate LoginBarcode"] == "999"
+
+
+def test_candidate_report_traces_candidates_to_transfer_rows(tmp_path: Path) -> None:
+    exceptions = tmp_path / "manual exceptions.csv"
+    users = tmp_path / "lunchtab.csv"
+    transfer = tmp_path / "transfer.csv"
+    transfer_headers = [
+        "FirstName",
+        "PreferredName",
+        "Surname",
+        "LoginBarcode",
+        "DefaultFamilyCode",
+        "DefaultFamilyBalanceAmount",
+        "OdinBalanceAmount",
+    ]
+    write_csv(
+        exceptions,
+        EXCEPTION_HEADERS,
+        [exception_row(odin_id="100", student="Garcia, Ellie", candidates="100")],
+    )
+    write_csv(
+        users,
+        LUNCHTAB_HEADERS,
+        [lunchtab_user("100", first="Elizabeth", preferred="Ellie", surname="Garcia")],
+    )
+    write_csv(
+        transfer,
+        transfer_headers,
+        [transfer_row("050"), transfer_row("100", balance="")],
+    )
+
+    summary = write_manual_review_candidate_report(
+        manual_review_exceptions_path=exceptions,
+        lunchtab_path=users,
+        output_dir=tmp_path / "out",
+        transfer_path=transfer,
+    )
+
+    rows = read_rows(summary.output_path)
+    assert rows[0]["Transfer RowNumber"] == "3"
+    assert rows[0]["Transfer Current OdinBalanceAmount"] == ""
+    assert rows[0]["Suggested OdinBalanceAmount"] == "12.25"
+    assert rows[0]["Transfer TraceStatus"] == "found unique transfer row"
 
 
 def test_candidate_report_validates_required_columns(tmp_path: Path) -> None:
@@ -168,4 +228,12 @@ def test_candidate_report_uses_sandbox_generated_exception_artifacts(
     rows = read_rows(summary.output_path)
     assert {row["SourceArtifact"] for row in rows} == {
         reconciliation.output_paths.manual_review_exceptions.name
+    }
+    assert {row["Transfer TraceStatus"] for row in rows} == {"not requested"}
+    workflow_rows = read_rows(reconciliation.output_paths.candidate_matches)
+    assert any(row["Transfer RowNumber"] for row in workflow_rows)
+    assert {row["Transfer TraceStatus"] for row in workflow_rows} <= {
+        "found unique transfer row",
+        "candidate not found in transfer",
+        "duplicate LoginBarcode in transfer",
     }
