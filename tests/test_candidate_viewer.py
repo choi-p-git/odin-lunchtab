@@ -28,12 +28,13 @@ def candidate_row(
     candidate_name: str,
     evidence: str,
     rank: str = "1",
+    odin_id: str | None = None,
     current_balance: str = "",
     trace_status: str = "found unique transfer row",
 ) -> dict[str, str]:
     return {
         "Reason": "identifier matched but name validation failed",
-        "Odin ID Number": barcode,
+        "Odin ID Number": odin_id or barcode,
         "Odin Student": odin_student,
         "Odin Balance": "12.25",
         "Candidate Rank": rank,
@@ -133,6 +134,51 @@ def test_candidate_viewer_summarizes_actionable_confidence_and_trace_counts(
     }
 
 
+def test_candidate_viewer_flags_ambiguous_actionable_groups(tmp_path: Path) -> None:
+    report = tmp_path / "candidates.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Garcia, Ellie",
+                barcode="100",
+                candidate_name="Garcia, Elizabeth (Ellie)",
+                evidence="preferred name matches",
+                rank="1",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="Medium",
+                odin_student="Garcia, Ellie",
+                barcode="101",
+                candidate_name="Garcia, Ellie",
+                evidence="first name matches",
+                rank="2",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="High",
+                odin_student="Smith, Ava",
+                barcode="200",
+                candidate_name="Smith, Ava",
+                evidence="first name matches",
+            ),
+        ],
+    )
+
+    rows = load_candidate_match_rows(report)
+    summary = summarize_candidate_match_rows(rows)
+
+    assert [row.actionable_group_count for row in rows] == [2, 2, 1]
+    assert [row.actionable_group_position for row in rows] == [1, 2, 1]
+    assert [row.has_ambiguous_actionable_group for row in rows] == [True, True, False]
+    assert filter_candidate_match_rows(rows, ambiguous_only=True) == rows[:2]
+    assert summary.actionable_rows == 3
+    assert summary.ambiguous_actionable_rows == 2
+    assert summary.ambiguous_actionable_groups == 1
+
+
 def test_candidate_viewer_detail_text_contains_copyable_audit_context(
     tmp_path: Path,
 ) -> None:
@@ -153,6 +199,8 @@ def test_candidate_viewer_detail_text_contains_copyable_audit_context(
     row = load_candidate_match_rows(report)[0]
 
     assert "Odin Student: Garcia, Ellie" in row.detail_text
+    assert "Actionable candidate group: 1 of 1" in row.detail_text
+    assert "Ambiguity: none detected for actionable candidates" in row.detail_text
     assert "LoginBarcode: 100" in row.detail_text
     assert "Transfer RowNumber: 7" in row.detail_text
     assert "Suggested OdinBalanceAmount: 12.25" in row.detail_text

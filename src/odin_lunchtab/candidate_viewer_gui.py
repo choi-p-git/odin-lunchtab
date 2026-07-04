@@ -23,6 +23,7 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.search_text = tk.StringVar()
         self.confidence_text = tk.StringVar(value="All")
         self.actionable_only = tk.BooleanVar(value=False)
+        self.ambiguous_only = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar()
         self.detail_text = tk.StringVar(value="Select a candidate row to inspect evidence.")
 
@@ -34,6 +35,7 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.search_text.trace_add("write", lambda *_: self._apply_filter())
         self.confidence_text.trace_add("write", lambda *_: self._apply_filter())
         self.actionable_only.trace_add("write", lambda *_: self._apply_filter())
+        self.ambiguous_only.trace_add("write", lambda *_: self._apply_filter())
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -70,6 +72,11 @@ class CandidateMatchesWindow(tk.Toplevel):
             text="Actionable only",
             variable=self.actionable_only,
         ).grid(row=3, column=1, sticky="w", pady=(8, 0))
+        ttk.Checkbutton(
+            header,
+            text="Ambiguous only",
+            variable=self.ambiguous_only,
+        ).grid(row=3, column=2, columnspan=2, sticky="w", pady=(8, 0))
 
         body = ttk.PanedWindow(self, orient="vertical")
         body.grid(row=1, column=0, sticky="nsew", padx=16)
@@ -89,6 +96,7 @@ class CandidateMatchesWindow(tk.Toplevel):
                 "transfer_row",
                 "current_balance",
                 "suggested_balance",
+                "ambiguity",
                 "score",
                 "evidence",
             ),
@@ -105,6 +113,7 @@ class CandidateMatchesWindow(tk.Toplevel):
             "transfer_row": ("Transfer row", 100),
             "current_balance": ("Current balance", 120),
             "suggested_balance": ("Suggested balance", 130),
+            "ambiguity": ("Ambiguity", 130),
             "score": ("Score", 70),
             "evidence": ("Evidence", 360),
         }
@@ -150,6 +159,7 @@ class CandidateMatchesWindow(tk.Toplevel):
             query=self.search_text.get(),
             confidence=self.confidence_text.get(),
             actionable_only=self.actionable_only.get(),
+            ambiguous_only=self.ambiguous_only.get(),
         )
         self.tree.delete(*self.tree.get_children())
         for index, row in enumerate(self.filtered_rows):
@@ -167,6 +177,11 @@ class CandidateMatchesWindow(tk.Toplevel):
                     row.transfer_row_number,
                     row.transfer_current_balance,
                     row.suggested_balance,
+                    (
+                        f"{row.actionable_group_position} of {row.actionable_group_count}"
+                        if row.is_actionable
+                        else ""
+                    ),
                     row.score,
                     row.evidence,
                 ),
@@ -174,7 +189,8 @@ class CandidateMatchesWindow(tk.Toplevel):
         summary = summarize_candidate_match_rows(self.rows)
         self.status_text.set(
             f"Showing {len(self.filtered_rows)} of {len(self.rows)} candidate rows "
-            f"({summary.actionable_rows} actionable) from {self.path.name}"
+            f"({summary.actionable_rows} actionable; "
+            f"{summary.ambiguous_actionable_groups} ambiguous groups) from {self.path.name}"
         )
         self._set_detail("Select a candidate row to inspect evidence.")
 
