@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +29,14 @@ class CandidateMatchRow:
     evidence: str
     source_artifact: str
     notes: str
+
+    @property
+    def is_actionable(self) -> bool:
+        return (
+            self.transfer_trace_status == "found unique transfer row"
+            and bool(self.suggested_balance.strip())
+            and not self.transfer_current_balance.strip()
+        )
 
     @property
     def searchable_text(self) -> str:
@@ -83,6 +92,14 @@ class CandidateMatchRow:
         )
 
 
+@dataclass(frozen=True)
+class CandidateMatchSummary:
+    total_rows: int
+    actionable_rows: int
+    confidence_counts: dict[str, int]
+    trace_status_counts: dict[str, int]
+
+
 def load_candidate_match_rows(path: Path) -> list[CandidateMatchRow]:
     headers, rows = read_csv(path)
     missing = [header for header in CANDIDATE_HEADERS if header not in headers]
@@ -119,6 +136,7 @@ def filter_candidate_match_rows(
     *,
     query: str = "",
     confidence: str = "All",
+    actionable_only: bool = False,
 ) -> list[CandidateMatchRow]:
     terms = [term.casefold() for term in query.split() if term.strip()]
     confidence_filter = confidence.casefold()
@@ -126,5 +144,17 @@ def filter_candidate_match_rows(
         row
         for row in rows
         if (confidence_filter == "all" or row.confidence.casefold() == confidence_filter)
+        and (not actionable_only or row.is_actionable)
         and all(term in row.searchable_text for term in terms)
     ]
+
+
+def summarize_candidate_match_rows(rows: list[CandidateMatchRow]) -> CandidateMatchSummary:
+    confidence_counts = Counter(row.confidence or "Blank" for row in rows)
+    trace_status_counts = Counter(row.transfer_trace_status or "Blank" for row in rows)
+    return CandidateMatchSummary(
+        total_rows=len(rows),
+        actionable_rows=sum(row.is_actionable for row in rows),
+        confidence_counts=dict(sorted(confidence_counts.items())),
+        trace_status_counts=dict(sorted(trace_status_counts.items())),
+    )

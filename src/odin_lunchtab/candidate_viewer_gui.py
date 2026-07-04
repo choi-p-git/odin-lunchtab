@@ -8,6 +8,7 @@ from odin_lunchtab.candidate_viewer import (
     CandidateMatchRow,
     filter_candidate_match_rows,
     load_candidate_match_rows,
+    summarize_candidate_match_rows,
 )
 from odin_lunchtab.desktop import friendly_error, open_path
 from odin_lunchtab.ui_helpers import add_tree_scrollbars, size_and_center
@@ -21,6 +22,7 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.filtered_rows: list[CandidateMatchRow] = []
         self.search_text = tk.StringVar()
         self.confidence_text = tk.StringVar(value="All")
+        self.actionable_only = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar()
         self.detail_text = tk.StringVar(value="Select a candidate row to inspect evidence.")
 
@@ -31,6 +33,7 @@ class CandidateMatchesWindow(tk.Toplevel):
         self._apply_filter()
         self.search_text.trace_add("write", lambda *_: self._apply_filter())
         self.confidence_text.trace_add("write", lambda *_: self._apply_filter())
+        self.actionable_only.trace_add("write", lambda *_: self._apply_filter())
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -62,6 +65,11 @@ class CandidateMatchesWindow(tk.Toplevel):
             state="readonly",
             width=12,
         ).grid(row=2, column=3, sticky="ew", padx=(8, 0))
+        ttk.Checkbutton(
+            header,
+            text="Actionable only",
+            variable=self.actionable_only,
+        ).grid(row=3, column=1, sticky="w", pady=(8, 0))
 
         body = ttk.PanedWindow(self, orient="vertical")
         body.grid(row=1, column=0, sticky="nsew", padx=16)
@@ -141,6 +149,7 @@ class CandidateMatchesWindow(tk.Toplevel):
             self.rows,
             query=self.search_text.get(),
             confidence=self.confidence_text.get(),
+            actionable_only=self.actionable_only.get(),
         )
         self.tree.delete(*self.tree.get_children())
         for index, row in enumerate(self.filtered_rows):
@@ -162,8 +171,10 @@ class CandidateMatchesWindow(tk.Toplevel):
                     row.evidence,
                 ),
             )
+        summary = summarize_candidate_match_rows(self.rows)
         self.status_text.set(
-            f"Showing {len(self.filtered_rows)} of {len(self.rows)} candidate rows from {self.path.name}"
+            f"Showing {len(self.filtered_rows)} of {len(self.rows)} candidate rows "
+            f"({summary.actionable_rows} actionable) from {self.path.name}"
         )
         self._set_detail("Select a candidate row to inspect evidence.")
 

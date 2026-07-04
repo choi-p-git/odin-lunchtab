@@ -8,6 +8,7 @@ import pytest
 from odin_lunchtab.candidate_viewer import (
     filter_candidate_match_rows,
     load_candidate_match_rows,
+    summarize_candidate_match_rows,
 )
 from odin_lunchtab.exception_candidates import CANDIDATE_HEADERS
 
@@ -27,6 +28,8 @@ def candidate_row(
     candidate_name: str,
     evidence: str,
     rank: str = "1",
+    current_balance: str = "",
+    trace_status: str = "found unique transfer row",
 ) -> dict[str, str]:
     return {
         "Reason": "identifier matched but name validation failed",
@@ -41,9 +44,9 @@ def candidate_row(
         "Candidate Name": candidate_name,
         "Candidate EmailAddress": f"{barcode}@sandbox.invalid",
         "Transfer RowNumber": "7",
-        "Transfer Current OdinBalanceAmount": "",
+        "Transfer Current OdinBalanceAmount": current_balance,
         "Suggested OdinBalanceAmount": "12.25",
-        "Transfer TraceStatus": "found unique transfer row",
+        "Transfer TraceStatus": trace_status,
         "Score": "95" if confidence == "High" else "75",
         "Evidence": evidence,
         "SourceArtifact": "Manual Review Exceptions.csv",
@@ -70,6 +73,7 @@ def test_candidate_viewer_loads_and_filters_rows(tmp_path: Path) -> None:
                 candidate_name="Smith, Ava",
                 evidence="surname matches | first name matches",
                 rank="2",
+                current_balance="4.00",
             ),
         ],
     )
@@ -82,6 +86,51 @@ def test_candidate_viewer_loads_and_filters_rows(tmp_path: Path) -> None:
     assert filter_candidate_match_rows(rows, confidence="Medium") == [rows[1]]
     assert filter_candidate_match_rows(rows, query="garcia", confidence="High") == [rows[0]]
     assert filter_candidate_match_rows(rows, query="row") == rows
+    assert filter_candidate_match_rows(rows, actionable_only=True) == [rows[0]]
+
+
+def test_candidate_viewer_summarizes_actionable_confidence_and_trace_counts(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "candidates.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Garcia, Ellie",
+                barcode="100",
+                candidate_name="Garcia, Elizabeth (Ellie)",
+                evidence="preferred name matches",
+            ),
+            candidate_row(
+                confidence="Medium",
+                odin_student="Smith, Ava",
+                barcode="200",
+                candidate_name="Smith, Ava",
+                evidence="surname matches",
+                current_balance="4.00",
+            ),
+            candidate_row(
+                confidence="Low",
+                odin_student="Jones, Max",
+                barcode="300",
+                candidate_name="Jones, Max",
+                evidence="first initial matches",
+                trace_status="candidate not found in transfer",
+            ),
+        ],
+    )
+
+    summary = summarize_candidate_match_rows(load_candidate_match_rows(report))
+
+    assert summary.total_rows == 3
+    assert summary.actionable_rows == 1
+    assert summary.confidence_counts == {"High": 1, "Low": 1, "Medium": 1}
+    assert summary.trace_status_counts == {
+        "candidate not found in transfer": 1,
+        "found unique transfer row": 2,
+    }
 
 
 def test_candidate_viewer_detail_text_contains_copyable_audit_context(
