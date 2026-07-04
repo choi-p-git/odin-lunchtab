@@ -6,9 +6,12 @@ from pathlib import Path
 import pytest
 
 from odin_lunchtab.candidate_viewer import (
+    AMBIGUOUS_EDIT_CHECKLIST_NAME,
+    MANUAL_EDIT_CHECKLIST_NAME,
     filter_candidate_match_rows,
     load_candidate_match_rows,
     summarize_candidate_match_rows,
+    write_manual_edit_checklists,
 )
 from odin_lunchtab.exception_candidates import CANDIDATE_HEADERS
 
@@ -18,6 +21,11 @@ def write_candidates(path: Path, rows: list[dict[str, str]]) -> None:
         writer = csv.DictWriter(file, fieldnames=CANDIDATE_HEADERS)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def read_csv_rows(path: Path) -> list[dict[str, str]]:
+    with path.open(encoding="utf-8-sig", newline="") as file:
+        return list(csv.DictReader(file))
 
 
 def candidate_row(
@@ -177,6 +185,62 @@ def test_candidate_viewer_flags_ambiguous_actionable_groups(tmp_path: Path) -> N
     assert summary.actionable_rows == 3
     assert summary.ambiguous_actionable_rows == 2
     assert summary.ambiguous_actionable_groups == 1
+
+
+def test_candidate_viewer_exports_manual_edit_checklists(tmp_path: Path) -> None:
+    report = tmp_path / "candidates.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Garcia, Ellie",
+                barcode="100",
+                candidate_name="Garcia, Elizabeth (Ellie)",
+                evidence="preferred name matches",
+                rank="1",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="Medium",
+                odin_student="Garcia, Ellie",
+                barcode="101",
+                candidate_name="Garcia, Ellie",
+                evidence="first name matches",
+                rank="2",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="High",
+                odin_student="Smith, Ava",
+                barcode="200",
+                candidate_name="Smith, Ava",
+                evidence="first name matches",
+            ),
+            candidate_row(
+                confidence="Low",
+                odin_student="Jones, Max",
+                barcode="300",
+                candidate_name="Jones, Max",
+                evidence="first initial matches",
+                trace_status="candidate not found in transfer",
+            ),
+        ],
+    )
+
+    output = write_manual_edit_checklists(
+        load_candidate_match_rows(report),
+        output_dir=tmp_path / "checklists",
+    )
+
+    ready_rows = read_csv_rows(tmp_path / "checklists" / MANUAL_EDIT_CHECKLIST_NAME)
+    ambiguous_rows = read_csv_rows(tmp_path / "checklists" / AMBIGUOUS_EDIT_CHECKLIST_NAME)
+    assert output.actionable_rows == 1
+    assert output.ambiguous_rows == 2
+    assert [row["Candidate LoginBarcode"] for row in ready_rows] == ["200"]
+    assert {row["Candidate LoginBarcode"] for row in ambiguous_rows} == {"100", "101"}
+    assert ready_rows[0]["ReviewCategory"] == "Ready - single actionable candidate"
+    assert "edit transfer row 7" in ready_rows[0]["ManualAction"]
 
 
 def test_candidate_viewer_detail_text_contains_copyable_audit_context(

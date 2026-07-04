@@ -287,7 +287,10 @@ down and choose deliberately. The viewer does not change the transfer file. When
 by a reconciliation run, the report also
 includes the candidate's transfer CSV row number, current `OdinBalanceAmount`, suggested
 Odin balance, and trace status so staff can manually audit the edit location before
-updating `OdinBalanceAmount`.
+updating `OdinBalanceAmount`. The viewer can also export two advisory checklist CSVs:
+`Manual Edit Checklist - Actionable Candidates.csv` for single-candidate manual edits and
+`Manual Edit Checklist - Ambiguous Candidates.csv` for cases where staff must choose among
+multiple actionable candidates.
 
 ### Manual reconciliation audit artifacts
 

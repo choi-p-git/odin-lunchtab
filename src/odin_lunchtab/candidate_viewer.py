@@ -1,11 +1,33 @@
 from __future__ import annotations
 
+import csv
 from collections import Counter
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from odin_lunchtab.exception_candidates import CANDIDATE_HEADERS
 from odin_lunchtab.workflow import read_csv
+
+MANUAL_EDIT_CHECKLIST_NAME = "Manual Edit Checklist - Actionable Candidates.csv"
+AMBIGUOUS_EDIT_CHECKLIST_NAME = "Manual Edit Checklist - Ambiguous Candidates.csv"
+MANUAL_EDIT_CHECKLIST_HEADERS = [
+    "ReviewCategory",
+    "Odin ID Number",
+    "Odin Student",
+    "Odin Balance",
+    "Candidate Position",
+    "Candidate Count",
+    "Confidence",
+    "Candidate LoginBarcode",
+    "Candidate FamilyCode",
+    "Candidate Name",
+    "Transfer RowNumber",
+    "Transfer Current OdinBalanceAmount",
+    "Suggested OdinBalanceAmount",
+    "Evidence",
+    "ManualAction",
+    "AuditNote",
+]
 
 
 @dataclass(frozen=True)
@@ -122,6 +144,14 @@ class CandidateMatchSummary:
     trace_status_counts: dict[str, int]
 
 
+@dataclass(frozen=True)
+class ManualEditChecklistOutput:
+    actionable_path: Path
+    ambiguous_path: Path
+    actionable_rows: int
+    ambiguous_rows: int
+
+
 def _group_key(row: CandidateMatchRow) -> str:
     return "\u001f".join([row.reason, row.odin_id, row.odin_student, row.odin_balance])
 
@@ -216,4 +246,73 @@ def summarize_candidate_match_rows(rows: list[CandidateMatchRow]) -> CandidateMa
         ambiguous_actionable_groups=len(ambiguous_groups),
         confidence_counts=dict(sorted(confidence_counts.items())),
         trace_status_counts=dict(sorted(trace_status_counts.items())),
+    )
+
+
+def _checklist_category(row: CandidateMatchRow) -> str:
+    return (
+        "Ambiguous - choose one candidate"
+        if row.has_ambiguous_actionable_group
+        else "Ready - single actionable candidate"
+    )
+
+
+def _checklist_row(row: CandidateMatchRow) -> dict[str, str]:
+    return {
+        "ReviewCategory": _checklist_category(row),
+        "Odin ID Number": row.odin_id,
+        "Odin Student": row.odin_student,
+        "Odin Balance": row.odin_balance,
+        "Candidate Position": str(row.actionable_group_position),
+        "Candidate Count": str(row.actionable_group_count),
+        "Confidence": row.confidence,
+        "Candidate LoginBarcode": row.login_barcode,
+        "Candidate FamilyCode": row.family_code,
+        "Candidate Name": row.candidate_name,
+        "Transfer RowNumber": row.transfer_row_number,
+        "Transfer Current OdinBalanceAmount": row.transfer_current_balance,
+        "Suggested OdinBalanceAmount": row.suggested_balance,
+        "Evidence": row.evidence,
+        "ManualAction": (
+            f"After verification, edit transfer row {row.transfer_row_number} "
+            f"OdinBalanceAmount to {row.suggested_balance}."
+        ),
+        "AuditNote": (
+            "Verify the candidate before editing. This checklist is advisory and does not "
+            "change the transfer CSV."
+        ),
+    }
+
+
+def write_manual_edit_checklists(
+    rows: list[CandidateMatchRow],
+    *,
+    output_dir: Path,
+) -> ManualEditChecklistOutput:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    actionable_path = output_dir / MANUAL_EDIT_CHECKLIST_NAME
+    ambiguous_path = output_dir / AMBIGUOUS_EDIT_CHECKLIST_NAME
+    actionable_rows = [
+        _checklist_row(row)
+        for row in rows
+        if row.is_actionable and not row.has_ambiguous_actionable_group
+    ]
+    ambiguous_rows = [_checklist_row(row) for row in rows if row.has_ambiguous_actionable_group]
+    for path, checklist_rows in (
+        (actionable_path, actionable_rows),
+        (ambiguous_path, ambiguous_rows),
+    ):
+        with path.open("w", encoding="utf-8-sig", newline="") as file:
+            writer = csv.DictWriter(
+                file,
+                fieldnames=MANUAL_EDIT_CHECKLIST_HEADERS,
+                extrasaction="ignore",
+            )
+            writer.writeheader()
+            writer.writerows(checklist_rows)
+    return ManualEditChecklistOutput(
+        actionable_path=actionable_path,
+        ambiguous_path=ambiguous_path,
+        actionable_rows=len(actionable_rows),
+        ambiguous_rows=len(ambiguous_rows),
     )

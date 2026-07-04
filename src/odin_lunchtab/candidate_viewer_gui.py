@@ -9,6 +9,7 @@ from odin_lunchtab.candidate_viewer import (
     filter_candidate_match_rows,
     load_candidate_match_rows,
     summarize_candidate_match_rows,
+    write_manual_edit_checklists,
 )
 from odin_lunchtab.desktop import friendly_error, open_path
 from odin_lunchtab.ui_helpers import add_tree_scrollbars, size_and_center
@@ -148,10 +149,13 @@ class CandidateMatchesWindow(tk.Toplevel):
         ttk.Button(footer, text="Copy selected details", command=self._copy_selected).grid(
             row=0, column=1, padx=(8, 0)
         )
-        ttk.Button(footer, text="Open CSV", command=self._open_csv).grid(
+        ttk.Button(footer, text="Export checklist", command=self._export_checklist).grid(
             row=0, column=2, padx=(8, 0)
         )
-        ttk.Button(footer, text="Close", command=self.destroy).grid(row=0, column=3, padx=(8, 0))
+        ttk.Button(footer, text="Open CSV", command=self._open_csv).grid(
+            row=0, column=3, padx=(8, 0)
+        )
+        ttk.Button(footer, text="Close", command=self.destroy).grid(row=0, column=4, padx=(8, 0))
 
     def _apply_filter(self) -> None:
         self.filtered_rows = filter_candidate_match_rows(
@@ -223,6 +227,21 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.clipboard_clear()
         self.clipboard_append(row.detail_text)
         self.status_text.set("Selected candidate details copied to the clipboard.")
+
+    def _export_checklist(self) -> None:
+        try:
+            output = write_manual_edit_checklists(self.rows, output_dir=self.path.parent)
+        except Exception as error:
+            messagebox.showerror("Manual Review Candidate Matches", friendly_error(error))
+            return
+        self.status_text.set(
+            "Manual edit checklists exported: "
+            f"{output.actionable_rows} ready row(s), {output.ambiguous_rows} ambiguous row(s)."
+        )
+        messagebox.showinfo(
+            "Manual Review Candidate Matches",
+            "Manual edit checklists were exported to the candidate report folder.",
+        )
 
     def _open_csv(self) -> None:
         try:
