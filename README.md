@@ -290,7 +290,9 @@ Odin balance, and trace status so staff can manually audit the edit location bef
 updating `OdinBalanceAmount`. The viewer can also export two advisory checklist CSVs:
 `Manual Edit Checklist - Actionable Candidates.csv` for single-candidate manual edits and
 `Manual Edit Checklist - Ambiguous Candidates.csv` for cases where staff must choose among
-multiple actionable candidates.
+multiple actionable candidates. The checklist includes a `Selected` column that can be used
+by the next guided-review step to validate that selected rows are actionable and that each
+ambiguous Odin exception has exactly one chosen candidate.
 
 ### Manual reconciliation audit artifacts
 

@@ -10,7 +10,10 @@ from odin_lunchtab.candidate_viewer import (
     MANUAL_EDIT_CHECKLIST_NAME,
     filter_candidate_match_rows,
     load_candidate_match_rows,
+    read_candidate_selection_values,
     summarize_candidate_match_rows,
+    validate_candidate_selection_file,
+    validate_candidate_selections,
     write_manual_edit_checklists,
 )
 from odin_lunchtab.exception_candidates import CANDIDATE_HEADERS
@@ -241,6 +244,153 @@ def test_candidate_viewer_exports_manual_edit_checklists(tmp_path: Path) -> None
     assert {row["Candidate LoginBarcode"] for row in ambiguous_rows} == {"100", "101"}
     assert ready_rows[0]["ReviewCategory"] == "Ready - single actionable candidate"
     assert "edit transfer row 7" in ready_rows[0]["ManualAction"]
+
+
+def test_candidate_selection_validator_accepts_one_choice_per_ambiguous_group(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "candidates.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Garcia, Ellie",
+                barcode="100",
+                candidate_name="Garcia, Elizabeth (Ellie)",
+                evidence="preferred name matches",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="Medium",
+                odin_student="Garcia, Ellie",
+                barcode="101",
+                candidate_name="Garcia, Ellie",
+                evidence="first name matches",
+                rank="2",
+                odin_id="999",
+            ),
+        ],
+    )
+    rows = load_candidate_match_rows(report)
+
+    validation = validate_candidate_selections(rows, {"100": "yes", "101": ""})
+
+    assert not validation.blocked
+    assert [row.login_barcode for row in validation.selected_rows] == ["100"]
+    assert validation.issues == ()
+
+
+def test_candidate_selection_validator_blocks_missing_and_multiple_ambiguous_choices(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "candidates.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Garcia, Ellie",
+                barcode="100",
+                candidate_name="Garcia, Elizabeth (Ellie)",
+                evidence="preferred name matches",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="Medium",
+                odin_student="Garcia, Ellie",
+                barcode="101",
+                candidate_name="Garcia, Ellie",
+                evidence="first name matches",
+                rank="2",
+                odin_id="999",
+            ),
+        ],
+    )
+    rows = load_candidate_match_rows(report)
+
+    missing = validate_candidate_selections(rows, {})
+    multiple = validate_candidate_selections(rows, {"100": "x", "101": "selected"})
+
+    assert missing.blocked
+    assert [issue.issue_type for issue in missing.issues] == ["ambiguous group missing selection"]
+    assert multiple.blocked
+    assert [issue.issue_type for issue in multiple.issues] == ["multiple selections for group"]
+
+
+def test_candidate_selection_validator_blocks_non_actionable_unknown_and_invalid_values(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "candidates.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="Low",
+                odin_student="Jones, Max",
+                barcode="300",
+                candidate_name="Jones, Max",
+                evidence="first initial matches",
+                trace_status="candidate not found in transfer",
+            ),
+            candidate_row(
+                confidence="High",
+                odin_student="Smith, Ava",
+                barcode="200",
+                candidate_name="Smith, Ava",
+                evidence="first name matches",
+            ),
+        ],
+    )
+    rows = load_candidate_match_rows(report)
+
+    validation = validate_candidate_selections(
+        rows,
+        {"300": "yes", "404": "yes", "200": "maybe"},
+    )
+
+    assert validation.blocked
+    assert [issue.issue_type for issue in validation.issues] == [
+        "non-actionable selected",
+        "unknown candidate",
+        "invalid selection value",
+    ]
+
+
+def test_candidate_selection_file_reader_and_validator(tmp_path: Path) -> None:
+    report = tmp_path / "candidates.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Smith, Ava",
+                barcode="200",
+                candidate_name="Smith, Ava",
+                evidence="first name matches",
+            ),
+        ],
+    )
+    output = write_manual_edit_checklists(
+        load_candidate_match_rows(report),
+        output_dir=tmp_path / "checklists",
+    )
+    rows = read_csv_rows(output.actionable_path)
+    rows[0]["Selected"] = "yes"
+    with output.actionable_path.open("w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    selections = read_candidate_selection_values(output.actionable_path)
+    validation = validate_candidate_selection_file(
+        load_candidate_match_rows(report),
+        output.actionable_path,
+    )
+
+    assert selections == {"200": "yes"}
+    assert not validation.blocked
+    assert [row.login_barcode for row in validation.selected_rows] == ["200"]
 
 
 def test_candidate_viewer_detail_text_contains_copyable_audit_context(

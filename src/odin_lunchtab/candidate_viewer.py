@@ -11,6 +11,8 @@ from odin_lunchtab.workflow import read_csv
 MANUAL_EDIT_CHECKLIST_NAME = "Manual Edit Checklist - Actionable Candidates.csv"
 AMBIGUOUS_EDIT_CHECKLIST_NAME = "Manual Edit Checklist - Ambiguous Candidates.csv"
 MANUAL_EDIT_CHECKLIST_HEADERS = [
+    "Selected",
+    "SelectionNote",
     "ReviewCategory",
     "Odin ID Number",
     "Odin Student",
@@ -152,6 +154,26 @@ class ManualEditChecklistOutput:
     ambiguous_rows: int
 
 
+@dataclass(frozen=True)
+class CandidateSelectionIssue:
+    severity: str
+    issue_type: str
+    odin_id: str
+    odin_student: str
+    candidate_login_barcode: str
+    message: str
+
+
+@dataclass(frozen=True)
+class CandidateSelectionValidation:
+    selected_rows: tuple[CandidateMatchRow, ...]
+    issues: tuple[CandidateSelectionIssue, ...]
+
+    @property
+    def blocked(self) -> bool:
+        return any(issue.severity == "BLOCKING" for issue in self.issues)
+
+
 def _group_key(row: CandidateMatchRow) -> str:
     return "\u001f".join([row.reason, row.odin_id, row.odin_student, row.odin_balance])
 
@@ -259,6 +281,8 @@ def _checklist_category(row: CandidateMatchRow) -> str:
 
 def _checklist_row(row: CandidateMatchRow) -> dict[str, str]:
     return {
+        "Selected": "",
+        "SelectionNote": "",
         "ReviewCategory": _checklist_category(row),
         "Odin ID Number": row.odin_id,
         "Odin Student": row.odin_student,
@@ -316,3 +340,126 @@ def write_manual_edit_checklists(
         actionable_rows=len(actionable_rows),
         ambiguous_rows=len(ambiguous_rows),
     )
+
+
+def _selected_value(value: str) -> bool | None:
+    normalized = value.strip().casefold()
+    if not normalized:
+        return False
+    if normalized in {"y", "yes", "true", "1", "x", "selected"}:
+        return True
+    if normalized in {"n", "no", "false", "0"}:
+        return False
+    return None
+
+
+def validate_candidate_selections(
+    rows: list[CandidateMatchRow],
+    selections: dict[str, str],
+) -> CandidateSelectionValidation:
+    rows_by_barcode = {row.login_barcode: row for row in rows}
+    issues: list[CandidateSelectionIssue] = []
+    selected_rows: list[CandidateMatchRow] = []
+    for barcode, value in selections.items():
+        selected = _selected_value(value)
+        row = rows_by_barcode.get(barcode)
+        if row is None:
+            issues.append(
+                CandidateSelectionIssue(
+                    severity="BLOCKING",
+                    issue_type="unknown candidate",
+                    odin_id="",
+                    odin_student="",
+                    candidate_login_barcode=barcode,
+                    message="Selected candidate does not exist in the candidate report.",
+                )
+            )
+            continue
+        if selected is None:
+            issues.append(
+                CandidateSelectionIssue(
+                    severity="BLOCKING",
+                    issue_type="invalid selection value",
+                    odin_id=row.odin_id,
+                    odin_student=row.odin_student,
+                    candidate_login_barcode=barcode,
+                    message="Selection value must be blank, yes/no, true/false, 1/0, x, or selected.",
+                )
+            )
+            continue
+        if not selected:
+            continue
+        if not row.is_actionable:
+            issues.append(
+                CandidateSelectionIssue(
+                    severity="BLOCKING",
+                    issue_type="non-actionable selected",
+                    odin_id=row.odin_id,
+                    odin_student=row.odin_student,
+                    candidate_login_barcode=barcode,
+                    message="Selected candidate is not actionable and cannot be applied safely.",
+                )
+            )
+            continue
+        selected_rows.append(row)
+
+    selected_by_group: dict[str, list[CandidateMatchRow]] = {}
+    for row in selected_rows:
+        selected_by_group.setdefault(row.exception_group_key, []).append(row)
+
+    actionable_groups = {
+        row.exception_group_key: row
+        for row in rows
+        if row.is_actionable and row.exception_group_key
+    }
+    for group_key, exemplar in actionable_groups.items():
+        group_selected = selected_by_group.get(group_key, [])
+        if exemplar.has_ambiguous_actionable_group and not group_selected:
+            issues.append(
+                CandidateSelectionIssue(
+                    severity="BLOCKING",
+                    issue_type="ambiguous group missing selection",
+                    odin_id=exemplar.odin_id,
+                    odin_student=exemplar.odin_student,
+                    candidate_login_barcode="",
+                    message="Ambiguous actionable group requires exactly one selected candidate.",
+                )
+            )
+        if len(group_selected) > 1:
+            issues.append(
+                CandidateSelectionIssue(
+                    severity="BLOCKING",
+                    issue_type="multiple selections for group",
+                    odin_id=exemplar.odin_id,
+                    odin_student=exemplar.odin_student,
+                    candidate_login_barcode=" | ".join(row.login_barcode for row in group_selected),
+                    message="Only one candidate may be selected for a single Odin exception.",
+                )
+            )
+
+    return CandidateSelectionValidation(
+        selected_rows=tuple(selected_rows),
+        issues=tuple(issues),
+    )
+
+
+def read_candidate_selection_values(path: Path) -> dict[str, str]:
+    headers, rows = read_csv(path)
+    required = {"Candidate LoginBarcode", "Selected"}
+    missing = sorted(required - set(headers))
+    if missing:
+        raise ValueError(
+            "Candidate selection CSV is missing required columns: " + ", ".join(missing)
+        )
+    return {
+        row.get("Candidate LoginBarcode", "").strip(): row.get("Selected", "")
+        for row in rows
+        if row.get("Candidate LoginBarcode", "").strip()
+    }
+
+
+def validate_candidate_selection_file(
+    rows: list[CandidateMatchRow],
+    selection_path: Path,
+) -> CandidateSelectionValidation:
+    return validate_candidate_selections(rows, read_candidate_selection_values(selection_path))
