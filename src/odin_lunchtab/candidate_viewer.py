@@ -10,6 +10,8 @@ from odin_lunchtab.workflow import read_csv
 
 MANUAL_EDIT_CHECKLIST_NAME = "Manual Edit Checklist - Actionable Candidates.csv"
 AMBIGUOUS_EDIT_CHECKLIST_NAME = "Manual Edit Checklist - Ambiguous Candidates.csv"
+PROPOSED_TRANSFER_NAME = "Proposed Edited Transfer - Candidate Selections.csv"
+PROPOSED_TRANSFER_AUDIT_NAME = "Proposed Transfer Selection Audit.csv"
 MANUAL_EDIT_CHECKLIST_HEADERS = [
     "Selected",
     "SelectionNote",
@@ -29,6 +31,18 @@ MANUAL_EDIT_CHECKLIST_HEADERS = [
     "Evidence",
     "ManualAction",
     "AuditNote",
+]
+PROPOSED_TRANSFER_AUDIT_HEADERS = [
+    "Odin ID Number",
+    "Odin Student",
+    "Candidate LoginBarcode",
+    "Candidate Name",
+    "Transfer RowNumber",
+    "Original OdinBalanceAmount",
+    "Proposed OdinBalanceAmount",
+    "Evidence",
+    "Status",
+    "Notes",
 ]
 
 
@@ -172,6 +186,13 @@ class CandidateSelectionValidation:
     @property
     def blocked(self) -> bool:
         return any(issue.severity == "BLOCKING" for issue in self.issues)
+
+
+@dataclass(frozen=True)
+class ProposedTransferOutput:
+    proposed_transfer_path: Path
+    audit_path: Path
+    updated_rows: int
 
 
 def _group_key(row: CandidateMatchRow) -> str:
@@ -463,3 +484,84 @@ def validate_candidate_selection_file(
     selection_path: Path,
 ) -> CandidateSelectionValidation:
     return validate_candidate_selections(rows, read_candidate_selection_values(selection_path))
+
+
+def _write_csv(path: Path, headers: list[str], rows: list[dict[str, str]]) -> None:
+    with path.open("w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=headers, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _selection_blocker_text(validation: CandidateSelectionValidation) -> str:
+    issue_types = ", ".join(issue.issue_type for issue in validation.issues)
+    return f"Candidate selections are blocked: {issue_types}"
+
+
+def write_proposed_transfer_from_selections(
+    *,
+    transfer_path: Path,
+    candidate_rows: list[CandidateMatchRow],
+    selections: dict[str, str],
+    output_dir: Path,
+) -> ProposedTransferOutput:
+    validation = validate_candidate_selections(candidate_rows, selections)
+    if validation.blocked:
+        raise ValueError(_selection_blocker_text(validation))
+
+    headers, transfer_rows = read_csv(transfer_path)
+    required = {"LoginBarcode", "OdinBalanceAmount"}
+    missing = sorted(required - set(headers))
+    if missing:
+        raise ValueError("Transfer CSV is missing required columns: " + ", ".join(missing))
+
+    output_rows = [dict(row) for row in transfer_rows]
+    audit_rows: list[dict[str, str]] = []
+    for row in validation.selected_rows:
+        try:
+            transfer_index = int(row.transfer_row_number) - 2
+        except ValueError as error:
+            raise ValueError(
+                f"Selected candidate {row.login_barcode} has invalid transfer row number."
+            ) from error
+        if transfer_index < 0 or transfer_index >= len(output_rows):
+            raise ValueError(
+                f"Selected candidate {row.login_barcode} points outside the transfer CSV."
+            )
+        transfer_row = output_rows[transfer_index]
+        if transfer_row.get("LoginBarcode", "").strip() != row.login_barcode:
+            raise ValueError(
+                f"Selected candidate {row.login_barcode} no longer matches transfer row "
+                f"{row.transfer_row_number}."
+            )
+        current_balance = transfer_row.get("OdinBalanceAmount", "")
+        if current_balance.strip():
+            raise ValueError(
+                f"Transfer row {row.transfer_row_number} already has OdinBalanceAmount."
+            )
+        transfer_row["OdinBalanceAmount"] = row.suggested_balance
+        audit_rows.append(
+            {
+                "Odin ID Number": row.odin_id,
+                "Odin Student": row.odin_student,
+                "Candidate LoginBarcode": row.login_barcode,
+                "Candidate Name": row.candidate_name,
+                "Transfer RowNumber": row.transfer_row_number,
+                "Original OdinBalanceAmount": current_balance,
+                "Proposed OdinBalanceAmount": row.suggested_balance,
+                "Evidence": row.evidence,
+                "Status": "UPDATED",
+                "Notes": "Selected candidate balance applied to proposed transfer copy.",
+            }
+        )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    proposed_path = output_dir / PROPOSED_TRANSFER_NAME
+    audit_path = output_dir / PROPOSED_TRANSFER_AUDIT_NAME
+    _write_csv(proposed_path, headers, output_rows)
+    _write_csv(audit_path, PROPOSED_TRANSFER_AUDIT_HEADERS, audit_rows)
+    return ProposedTransferOutput(
+        proposed_transfer_path=proposed_path,
+        audit_path=audit_path,
+        updated_rows=len(audit_rows),
+    )

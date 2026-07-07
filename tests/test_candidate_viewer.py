@@ -8,6 +8,8 @@ import pytest
 from odin_lunchtab.candidate_viewer import (
     AMBIGUOUS_EDIT_CHECKLIST_NAME,
     MANUAL_EDIT_CHECKLIST_NAME,
+    PROPOSED_TRANSFER_AUDIT_NAME,
+    PROPOSED_TRANSFER_NAME,
     filter_candidate_match_rows,
     load_candidate_match_rows,
     read_candidate_selection_values,
@@ -15,6 +17,7 @@ from odin_lunchtab.candidate_viewer import (
     validate_candidate_selection_file,
     validate_candidate_selections,
     write_manual_edit_checklists,
+    write_proposed_transfer_from_selections,
 )
 from odin_lunchtab.exception_candidates import CANDIDATE_HEADERS
 
@@ -22,6 +25,24 @@ from odin_lunchtab.exception_candidates import CANDIDATE_HEADERS
 def write_candidates(path: Path, rows: list[dict[str, str]]) -> None:
     with path.open("w", encoding="utf-8-sig", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=CANDIDATE_HEADERS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+TRANSFER_HEADERS = [
+    "FirstName",
+    "PreferredName",
+    "Surname",
+    "LoginBarcode",
+    "DefaultFamilyCode",
+    "DefaultFamilyBalanceAmount",
+    "OdinBalanceAmount",
+]
+
+
+def write_transfer(path: Path, rows: list[dict[str, str]]) -> None:
+    with path.open("w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=TRANSFER_HEADERS)
         writer.writeheader()
         writer.writerows(rows)
 
@@ -42,6 +63,7 @@ def candidate_row(
     odin_id: str | None = None,
     current_balance: str = "",
     trace_status: str = "found unique transfer row",
+    transfer_row_number: str = "7",
 ) -> dict[str, str]:
     return {
         "Reason": "identifier matched but name validation failed",
@@ -55,7 +77,7 @@ def candidate_row(
         "Candidate FamilyCode": f"F-{barcode}",
         "Candidate Name": candidate_name,
         "Candidate EmailAddress": f"{barcode}@sandbox.invalid",
-        "Transfer RowNumber": "7",
+        "Transfer RowNumber": transfer_row_number,
         "Transfer Current OdinBalanceAmount": current_balance,
         "Suggested OdinBalanceAmount": "12.25",
         "Transfer TraceStatus": trace_status,
@@ -63,6 +85,18 @@ def candidate_row(
         "Evidence": evidence,
         "SourceArtifact": "Manual Review Exceptions.csv",
         "Notes": "Advisory candidate only.",
+    }
+
+
+def transfer_row(barcode: str, *, balance: str = "") -> dict[str, str]:
+    return {
+        "FirstName": "Ava",
+        "PreferredName": "",
+        "Surname": "Smith",
+        "LoginBarcode": barcode,
+        "DefaultFamilyCode": f"F-{barcode}",
+        "DefaultFamilyBalanceAmount": "0",
+        "OdinBalanceAmount": balance,
     }
 
 
@@ -174,6 +208,7 @@ def test_candidate_viewer_flags_ambiguous_actionable_groups(tmp_path: Path) -> N
                 barcode="200",
                 candidate_name="Smith, Ava",
                 evidence="first name matches",
+                transfer_row_number="3",
             ),
         ],
     )
@@ -219,6 +254,7 @@ def test_candidate_viewer_exports_manual_edit_checklists(tmp_path: Path) -> None
                 barcode="200",
                 candidate_name="Smith, Ava",
                 evidence="first name matches",
+                transfer_row_number="3",
             ),
             candidate_row(
                 confidence="Low",
@@ -243,7 +279,7 @@ def test_candidate_viewer_exports_manual_edit_checklists(tmp_path: Path) -> None
     assert [row["Candidate LoginBarcode"] for row in ready_rows] == ["200"]
     assert {row["Candidate LoginBarcode"] for row in ambiguous_rows} == {"100", "101"}
     assert ready_rows[0]["ReviewCategory"] == "Ready - single actionable candidate"
-    assert "edit transfer row 7" in ready_rows[0]["ManualAction"]
+    assert "edit transfer row 3" in ready_rows[0]["ManualAction"]
 
 
 def test_candidate_selection_validator_accepts_one_choice_per_ambiguous_group(
@@ -339,6 +375,7 @@ def test_candidate_selection_validator_blocks_non_actionable_unknown_and_invalid
                 barcode="200",
                 candidate_name="Smith, Ava",
                 evidence="first name matches",
+                transfer_row_number="3",
             ),
         ],
     )
@@ -368,6 +405,7 @@ def test_candidate_selection_file_reader_and_validator(tmp_path: Path) -> None:
                 barcode="200",
                 candidate_name="Smith, Ava",
                 evidence="first name matches",
+                transfer_row_number="3",
             ),
         ],
     )
@@ -391,6 +429,97 @@ def test_candidate_selection_file_reader_and_validator(tmp_path: Path) -> None:
     assert selections == {"200": "yes"}
     assert not validation.blocked
     assert [row.login_barcode for row in validation.selected_rows] == ["200"]
+
+
+def test_write_proposed_transfer_applies_valid_selected_candidates_to_copy(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "candidates.csv"
+    transfer = tmp_path / "transfer.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Smith, Ava",
+                barcode="200",
+                candidate_name="Smith, Ava",
+                evidence="first name matches",
+                transfer_row_number="3",
+            ),
+            candidate_row(
+                confidence="Low",
+                odin_student="Jones, Max",
+                barcode="300",
+                candidate_name="Jones, Max",
+                evidence="first initial matches",
+                trace_status="candidate not found in transfer",
+            ),
+        ],
+    )
+    write_transfer(transfer, [transfer_row("100"), transfer_row("200"), transfer_row("300")])
+
+    output = write_proposed_transfer_from_selections(
+        transfer_path=transfer,
+        candidate_rows=load_candidate_match_rows(report),
+        selections={"200": "yes"},
+        output_dir=tmp_path / "proposed",
+    )
+
+    original_rows = read_csv_rows(transfer)
+    proposed_rows = read_csv_rows(tmp_path / "proposed" / PROPOSED_TRANSFER_NAME)
+    audit_rows = read_csv_rows(tmp_path / "proposed" / PROPOSED_TRANSFER_AUDIT_NAME)
+    assert output.updated_rows == 1
+    assert original_rows[1]["OdinBalanceAmount"] == ""
+    assert proposed_rows[1]["OdinBalanceAmount"] == "12.25"
+    assert proposed_rows[0]["OdinBalanceAmount"] == ""
+    assert audit_rows[0]["Candidate LoginBarcode"] == "200"
+    assert audit_rows[0]["Status"] == "UPDATED"
+
+
+def test_write_proposed_transfer_blocks_invalid_selection_and_stale_transfer(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "candidates.csv"
+    transfer = tmp_path / "transfer.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Smith, Ava",
+                barcode="200",
+                candidate_name="Smith, Ava",
+                evidence="first name matches",
+                transfer_row_number="3",
+            ),
+            candidate_row(
+                confidence="Low",
+                odin_student="Jones, Max",
+                barcode="300",
+                candidate_name="Jones, Max",
+                evidence="first initial matches",
+                trace_status="candidate not found in transfer",
+            ),
+        ],
+    )
+    rows = load_candidate_match_rows(report)
+    write_transfer(transfer, [transfer_row("100"), transfer_row("200", balance="9.00")])
+
+    with pytest.raises(ValueError, match="non-actionable selected"):
+        write_proposed_transfer_from_selections(
+            transfer_path=transfer,
+            candidate_rows=rows,
+            selections={"300": "yes"},
+            output_dir=tmp_path / "bad-selection",
+        )
+    with pytest.raises(ValueError, match="already has OdinBalanceAmount"):
+        write_proposed_transfer_from_selections(
+            transfer_path=transfer,
+            candidate_rows=rows,
+            selections={"200": "yes"},
+            output_dir=tmp_path / "stale",
+        )
 
 
 def test_candidate_viewer_detail_text_contains_copyable_audit_context(

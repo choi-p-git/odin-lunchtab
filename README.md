@@ -293,6 +293,8 @@ updating `OdinBalanceAmount`. The viewer can also export two advisory checklist 
 multiple actionable candidates. The checklist includes a `Selected` column that can be used
 by the next guided-review step to validate that selected rows are actionable and that each
 ambiguous Odin exception has exactly one chosen candidate.
+Validated selections can be written to a proposed transfer copy plus a selection audit; the
+original transfer CSV remains unchanged.
 
 ### Manual reconciliation audit artifacts
 
