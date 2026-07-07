@@ -42,6 +42,7 @@ INITIAL_BALANCE_HEADERS = ["FamilyName", "FamilyCode", "Amount"]
 PRESET_NAMES = (
     "Clean baseline",
     "Reconciliation exceptions",
+    "Preferred-name ambiguity",
     "Malformed source rows",
     "InitialBalances blockers",
     "Mixed stress",
@@ -79,6 +80,7 @@ class SandboxExceptionCounts:
     duplicate_lunchtab_identifier: int = 0
     name_validation_failures: int = 0
     ambiguous_name_fallbacks: int = 0
+    preferred_name_ambiguities: int = 0
     multiple_odin_to_one_lunchtab: int = 0
     malformed_missing_fields: int = 0
     malformed_invalid_balances: int = 0
@@ -197,6 +199,14 @@ def preset_config(name: str, *, output_root: Path | None = None) -> SandboxConfi
                 multiple_odin_to_one_lunchtab=1,
             ),
         )
+    if name == "Preferred-name ambiguity":
+        return replace(
+            config,
+            total_odin_rows=21,
+            total_lunchtab_rows=28,
+            matchable_rows=20,
+            exceptions=SandboxExceptionCounts(preferred_name_ambiguities=1),
+        )
     if name == "Malformed source rows":
         return replace(
             config,
@@ -223,7 +233,7 @@ def preset_config(name: str, *, output_root: Path | None = None) -> SandboxConfi
         )
     return replace(
         config,
-        total_odin_rows=36,
+        total_odin_rows=38,
         total_lunchtab_rows=46,
         matchable_rows=24,
         exceptions=SandboxExceptionCounts(
@@ -232,6 +242,7 @@ def preset_config(name: str, *, output_root: Path | None = None) -> SandboxConfi
             duplicate_lunchtab_identifier=1,
             name_validation_failures=2,
             ambiguous_name_fallbacks=1,
+            preferred_name_ambiguities=1,
             multiple_odin_to_one_lunchtab=1,
             malformed_missing_fields=1,
             malformed_invalid_balances=1,
@@ -365,6 +376,7 @@ def _required_odin_rows(config: SandboxConfig) -> int:
         + exceptions.duplicate_lunchtab_identifier
         + exceptions.name_validation_failures
         + exceptions.ambiguous_name_fallbacks
+        + exceptions.preferred_name_ambiguities
         + (exceptions.multiple_odin_to_one_lunchtab * 2)
         + exceptions.malformed_missing_fields
         + exceptions.malformed_invalid_balances
@@ -378,6 +390,7 @@ def _required_lunchtab_rows(config: SandboxConfig) -> int:
         + (exceptions.duplicate_lunchtab_identifier * 2)
         + exceptions.name_validation_failures
         + (exceptions.ambiguous_name_fallbacks * 2)
+        + (exceptions.preferred_name_ambiguities * 2)
         + exceptions.multiple_odin_to_one_lunchtab
     )
 
@@ -497,6 +510,37 @@ def _add_reconciliation_exception_rows(
             )
         )
         scenario_index += 2
+
+    for item in range(exceptions.preferred_name_ambiguities):
+        surname = f"PreferredAmbiguous{item + 1:03d}"
+        odin_person = _SyntheticPerson(first="Elizabeth", preferred="Ellie", surname=surname)
+        first_candidate = _SyntheticPerson(first="Elizabeth", preferred="Ellie", surname=surname)
+        second_candidate = _SyntheticPerson(first="Eleanor", preferred="Ellie", surname=surname)
+        odin_rows.append(
+            _odin_row(
+                f"PREF-AMBIG-ODIN-{item + 1:04d}",
+                odin_person,
+                _balance(rng, config.balance, 9),
+            )
+        )
+        lunchtab_rows.append(
+            _lunchtab_row(
+                f"PREF-AMBIG-A-{item + 1:04d}",
+                first_candidate,
+                f"PREF-AMBIG-FAM-A-{item + 1:04d}",
+                scenario_index,
+            )
+        )
+        lunchtab_rows.append(
+            _lunchtab_row(
+                f"PREF-AMBIG-B-{item + 1:04d}",
+                second_candidate,
+                f"PREF-AMBIG-FAM-B-{item + 1:04d}",
+                scenario_index + 1,
+            )
+        )
+        scenario_index += 2
+        people_index += 1
 
     for item in range(exceptions.multiple_odin_to_one_lunchtab):
         person = _person(people_index)

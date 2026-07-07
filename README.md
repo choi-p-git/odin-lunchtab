@@ -32,10 +32,10 @@ The sandbox app creates deterministic synthetic test packs containing:
 - `Sandbox Expected Summary.json`
 - `sandbox-manifest.json`
 
-Use the preset selector for clean baseline data, reconciliation exceptions, malformed Odin
-rows, InitialBalances blockers, or a mixed stress set. Row counts, identifier conventions,
-family grouping, balance ranges, exception volumes, output folder, and random seed can be
-edited before generation.
+Use the preset selector for clean baseline data, reconciliation exceptions, preferred-name
+ambiguity, malformed Odin rows, InitialBalances blockers, or a mixed stress set. Row
+counts, identifier conventions, family grouping, balance ranges, exception volumes, output
+folder, and random seed can be edited before generation.
 
 Identifier conventions are configured separately for Odin IDs, LunchTab login barcodes, and
 LunchTab family codes. Family codes can use their own prefix, starting number, and padding

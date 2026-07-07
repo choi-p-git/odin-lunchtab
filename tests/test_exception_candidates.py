@@ -9,6 +9,10 @@ from odin_lunchtab.exception_candidates import (
     CANDIDATE_REPORT_NAME,
     write_manual_review_candidate_report,
 )
+from odin_lunchtab.candidate_viewer import (
+    load_candidate_match_rows,
+    summarize_candidate_match_rows,
+)
 from odin_lunchtab.sandbox_data import generate_sandbox_pack, preset_config
 from odin_lunchtab.workflow import run_workflow
 
@@ -237,3 +241,30 @@ def test_candidate_report_uses_sandbox_generated_exception_artifacts(
         "candidate not found in transfer",
         "duplicate LoginBarcode in transfer",
     }
+
+
+def test_candidate_report_flags_preferred_name_ambiguity_from_sandbox(
+    tmp_path: Path,
+) -> None:
+    pack = generate_sandbox_pack(preset_config("Preferred-name ambiguity", output_root=tmp_path))
+    reconciliation = run_workflow(
+        raw_data_dir=pack.run_dir,
+        output_dir=tmp_path / "reconciliation",
+        odin_path=pack.paths.odin_workbook,
+        lunchtab_path=pack.paths.lunchtab_users,
+    )
+
+    rows = load_candidate_match_rows(reconciliation.output_paths.candidate_matches)
+    preferred_rows = [row for row in rows if row.login_barcode.startswith("PREF-AMBIG-")]
+    summary = summarize_candidate_match_rows(rows)
+
+    assert reconciliation.exceptions == 1
+    assert {row.reason for row in preferred_rows} == {"ambiguous name match"}
+    assert {row.candidate_name for row in preferred_rows} == {
+        "PreferredAmbiguous001, Eleanor (Ellie)",
+        "PreferredAmbiguous001, Elizabeth (Ellie)",
+    }
+    assert all(row.is_actionable for row in preferred_rows)
+    assert all(row.has_ambiguous_actionable_group for row in preferred_rows)
+    assert [row.actionable_group_count for row in preferred_rows] == [2, 2]
+    assert summary.ambiguous_actionable_groups == 1

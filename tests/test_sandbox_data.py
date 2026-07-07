@@ -114,6 +114,22 @@ def test_reconciliation_preset_covers_expected_exception_reasons(tmp_path: Path)
     assert pack.expected.manual_review_exceptions == 8
 
 
+def test_preferred_name_ambiguity_preset_covers_legal_name_scenarios(
+    tmp_path: Path,
+) -> None:
+    pack = generate_sandbox_pack(
+        preset_config("Preferred-name ambiguity", output_root=tmp_path),
+        now=fixed_now,
+    )
+    _, users = csv_rows(pack.paths.lunchtab_users)
+
+    preferred_rows = [row for row in users if row["LoginBarcode"].startswith("PREF-AMBIG-")]
+    assert [row["FirstName"] for row in preferred_rows] == ["Elizabeth", "Eleanor"]
+    assert {row["PreferredName"] for row in preferred_rows} == {"Ellie"}
+    assert pack.expected.exception_reasons == {"ambiguous name match": 1}
+    assert pack.expected.manual_review_exceptions == 1
+
+
 def test_malformed_preset_reports_malformed_rows(tmp_path: Path) -> None:
     pack = generate_sandbox_pack(
         preset_config("Malformed source rows", output_root=tmp_path),
