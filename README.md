@@ -291,10 +291,10 @@ updating `OdinBalanceAmount`. The viewer can also export two advisory checklist 
 `Manual Edit Checklist - Actionable Candidates.csv` for single-candidate manual edits and
 `Manual Edit Checklist - Ambiguous Candidates.csv` for cases where staff must choose among
 multiple actionable candidates. The checklist includes a `Selected` column that can be used
-by the next guided-review step to validate that selected rows are actionable and that each
-ambiguous Odin exception has exactly one chosen candidate.
-Validated selections can be written to a proposed transfer copy plus a selection audit; the
-original transfer CSV remains unchanged.
+by the viewer's **Create proposed transfer** action to validate that selected rows are
+actionable and that each ambiguous Odin exception has exactly one chosen candidate.
+Validated selections are written to `Proposed Edited Transfer - Candidate Selections.csv`
+plus `Proposed Transfer Selection Audit.csv`; the original transfer CSV remains unchanged.
 
 ### Manual reconciliation audit artifacts
 

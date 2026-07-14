@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+import queue
+import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from odin_lunchtab.candidate_viewer import (
     CandidateMatchRow,
+    ProposedTransferOutput,
     filter_candidate_match_rows,
     load_candidate_match_rows,
+    read_candidate_selection_values,
     summarize_candidate_match_rows,
     write_manual_edit_checklists,
+    write_proposed_transfer_from_selections,
 )
 from odin_lunchtab.desktop import friendly_error, open_path
 from odin_lunchtab.ui_helpers import add_tree_scrollbars, size_and_center
+
+WorkerEvent = tuple[str, ProposedTransferOutput | Exception]
 
 
 class CandidateMatchesWindow(tk.Toplevel):
@@ -21,6 +28,9 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.path = path
         self.rows = load_candidate_match_rows(path)
         self.filtered_rows: list[CandidateMatchRow] = []
+        self.worker_events: queue.Queue[WorkerEvent] = queue.Queue()
+        self.worker_poll_after: str | None = None
+        self.proposed_transfer_running = False
         self.search_text = tk.StringVar()
         self.confidence_text = tk.StringVar(value="All")
         self.actionable_only = tk.BooleanVar(value=False)
@@ -37,6 +47,8 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.confidence_text.trace_add("write", lambda *_: self._apply_filter())
         self.actionable_only.trace_add("write", lambda *_: self._apply_filter())
         self.ambiguous_only.trace_add("write", lambda *_: self._apply_filter())
+        self.bind("<Destroy>", self._on_destroy, add="+")
+        self._schedule_worker_poll()
 
     def _build(self) -> None:
         self.columnconfigure(0, weight=1)
@@ -152,10 +164,121 @@ class CandidateMatchesWindow(tk.Toplevel):
         ttk.Button(footer, text="Export checklist", command=self._export_checklist).grid(
             row=0, column=2, padx=(8, 0)
         )
-        ttk.Button(footer, text="Open CSV", command=self._open_csv).grid(
-            row=0, column=3, padx=(8, 0)
+        self.propose_button = ttk.Button(
+            footer,
+            text="Create proposed transfer",
+            command=self._create_proposed_transfer,
         )
-        ttk.Button(footer, text="Close", command=self.destroy).grid(row=0, column=4, padx=(8, 0))
+        self.propose_button.grid(row=0, column=3, padx=(8, 0))
+        ttk.Button(footer, text="Open CSV", command=self._open_csv).grid(
+            row=0, column=4, padx=(8, 0)
+        )
+        ttk.Button(footer, text="Close", command=self.destroy).grid(row=0, column=5, padx=(8, 0))
+
+        self.progress = ttk.Progressbar(footer, mode="indeterminate", length=120)
+        self.progress.grid(row=1, column=1, columnspan=5, sticky="e", pady=(8, 0))
+        self.progress.grid_remove()
+
+    def _set_proposed_transfer_busy(self, busy: bool) -> None:
+        self.proposed_transfer_running = busy
+        self.propose_button.configure(state="disabled" if busy else "normal")
+        if busy:
+            self.progress.grid()
+            self.progress.start(10)
+        else:
+            self.progress.stop()
+            self.progress.grid_remove()
+
+    def _schedule_worker_poll(self) -> None:
+        self.worker_poll_after = self.after(100, self._poll_worker_events)
+
+    def _on_destroy(self, event: tk.Event[tk.Misc]) -> None:
+        if event.widget is not self or self.worker_poll_after is None:
+            return
+        self.after_cancel(self.worker_poll_after)
+        self.worker_poll_after = None
+
+    def _poll_worker_events(self) -> None:
+        self.worker_poll_after = None
+        while True:
+            try:
+                event_name, payload = self.worker_events.get_nowait()
+            except queue.Empty:
+                break
+            if event_name == "proposed_transfer_created":
+                self._set_proposed_transfer_busy(False)
+                output = payload
+                if isinstance(output, Exception):
+                    messagebox.showerror("Manual Review Candidate Matches", friendly_error(output))
+                    continue
+                self.status_text.set(
+                    f"Proposed transfer created: {output.updated_rows} selected update(s)."
+                )
+                messagebox.showinfo(
+                    "Manual Review Candidate Matches",
+                    "Proposed transfer files were created:\n\n"
+                    f"- {output.proposed_transfer_path.name}\n"
+                    f"- {output.audit_path.name}",
+                )
+            elif event_name == "proposed_transfer_failed":
+                self._set_proposed_transfer_busy(False)
+                error = payload if isinstance(payload, Exception) else RuntimeError(str(payload))
+                messagebox.showerror("Manual Review Candidate Matches", friendly_error(error))
+        if self.winfo_exists():
+            self._schedule_worker_poll()
+
+    def _create_proposed_transfer(self) -> None:
+        if self.proposed_transfer_running:
+            return
+        selection_path = filedialog.askopenfilename(
+            title="Select reviewed manual edit checklist",
+            initialdir=str(self.path.parent),
+            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+        )
+        if not selection_path:
+            return
+        transfer_path = filedialog.askopenfilename(
+            title="Select original transfer CSV",
+            initialdir=str(self.path.parent),
+            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+        )
+        if not transfer_path:
+            return
+        output_dir = filedialog.askdirectory(
+            title="Choose folder for proposed transfer files",
+            initialdir=str(self.path.parent),
+        )
+        if not output_dir:
+            return
+
+        self._set_proposed_transfer_busy(True)
+        self.status_text.set("Creating proposed transfer copy from reviewed selections...")
+
+        selection_file = Path(selection_path)
+        transfer_file = Path(transfer_path)
+        output_folder = Path(output_dir)
+
+        def worker() -> None:
+            try:
+                selections = read_candidate_selection_values(selection_file)
+                output = write_proposed_transfer_from_selections(
+                    transfer_path=transfer_file,
+                    candidate_rows=self.rows,
+                    selections=selections,
+                    output_dir=output_folder,
+                )
+            except Exception as error:
+                self.worker_events.put(("proposed_transfer_failed", error))
+            else:
+                self.worker_events.put(("proposed_transfer_created", output))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _open_csv(self) -> None:
+        try:
+            open_path(self.path)
+        except Exception as error:
+            messagebox.showerror("Manual Review Candidate Matches", friendly_error(error))
 
     def _apply_filter(self) -> None:
         self.filtered_rows = filter_candidate_match_rows(
@@ -242,9 +365,3 @@ class CandidateMatchesWindow(tk.Toplevel):
             "Manual Review Candidate Matches",
             "Manual edit checklists were exported to the candidate report folder.",
         )
-
-    def _open_csv(self) -> None:
-        try:
-            open_path(self.path)
-        except Exception as error:
-            messagebox.showerror("Manual Review Candidate Matches", friendly_error(error))
