@@ -12,6 +12,7 @@ MANUAL_EDIT_CHECKLIST_NAME = "Manual Edit Checklist - Actionable Candidates.csv"
 AMBIGUOUS_EDIT_CHECKLIST_NAME = "Manual Edit Checklist - Ambiguous Candidates.csv"
 PROPOSED_TRANSFER_NAME = "Proposed Edited Transfer - Candidate Selections.csv"
 PROPOSED_TRANSFER_AUDIT_NAME = "Proposed Transfer Selection Audit.csv"
+CANDIDATE_REVIEW_DECISIONS_NAME = "Candidate Review Decisions.csv"
 MANUAL_EDIT_CHECKLIST_HEADERS = [
     "Selected",
     "SelectionNote",
@@ -42,6 +43,21 @@ PROPOSED_TRANSFER_AUDIT_HEADERS = [
     "Proposed OdinBalanceAmount",
     "Evidence",
     "Status",
+    "Notes",
+]
+CANDIDATE_REVIEW_DECISION_HEADERS = [
+    "ReviewStatus",
+    "Odin ID Number",
+    "Odin Student",
+    "Odin Balance",
+    "Candidate Position",
+    "Candidate Count",
+    "Candidate LoginBarcode",
+    "Candidate FamilyCode",
+    "Candidate Name",
+    "Transfer RowNumber",
+    "Suggested OdinBalanceAmount",
+    "Evidence",
     "Notes",
 ]
 
@@ -320,6 +336,14 @@ class ProposedTransferOutput:
     audit_path: Path
     updated_rows: int
     transfer_path: Path
+    review_decisions_path: Path | None = None
+    review_decision_rows: int = 0
+
+
+@dataclass(frozen=True)
+class CandidateReviewDecisionOutput:
+    path: Path
+    rows: int
 
 
 def default_transfer_path_for_candidate_report(candidate_report_path: Path) -> Path | None:
@@ -447,6 +471,60 @@ def build_candidate_review_groups(
 def create_candidate_review_state(rows: list[CandidateMatchRow]) -> CandidateReviewState:
     groups = build_candidate_review_groups(rows)
     return CandidateReviewState(groups=groups, selections={}, skipped_groups=frozenset())
+
+
+def _review_decision_status(state: CandidateReviewState, group: CandidateReviewGroup) -> str:
+    if group.group_key in state.skipped_groups:
+        return "SKIPPED"
+    if any(state.selections.get(row.login_barcode) == "yes" for row in group.actionable_rows):
+        return "REVIEWED"
+    return "UNRESOLVED"
+
+
+def write_candidate_review_decisions(
+    state: CandidateReviewState,
+    *,
+    output_dir: Path,
+) -> CandidateReviewDecisionOutput:
+    rows: list[dict[str, str]] = []
+    for group in state.groups:
+        group_status = _review_decision_status(state, group)
+        for row in group.actionable_rows:
+            selected = state.selections.get(row.login_barcode) == "yes"
+            if selected:
+                review_status = "SELECTED"
+                notes = "Selected in candidate viewer and eligible for proposed transfer."
+            elif group_status == "SKIPPED":
+                review_status = "SKIPPED"
+                notes = "Candidate group was skipped in candidate viewer."
+            elif group_status == "REVIEWED":
+                review_status = "NOT_SELECTED"
+                notes = "Another candidate in this group was selected."
+            else:
+                review_status = "UNRESOLVED"
+                notes = "Candidate group was not selected or skipped."
+            rows.append(
+                {
+                    "ReviewStatus": review_status,
+                    "Odin ID Number": row.odin_id,
+                    "Odin Student": row.odin_student,
+                    "Odin Balance": row.odin_balance,
+                    "Candidate Position": str(row.actionable_group_position),
+                    "Candidate Count": str(row.actionable_group_count),
+                    "Candidate LoginBarcode": row.login_barcode,
+                    "Candidate FamilyCode": row.family_code,
+                    "Candidate Name": row.candidate_name,
+                    "Transfer RowNumber": row.transfer_row_number,
+                    "Suggested OdinBalanceAmount": row.suggested_balance,
+                    "Evidence": row.evidence,
+                    "Notes": notes,
+                }
+            )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / CANDIDATE_REVIEW_DECISIONS_NAME
+    _write_csv(path, CANDIDATE_REVIEW_DECISION_HEADERS, rows)
+    return CandidateReviewDecisionOutput(path=path, rows=len(rows))
 
 
 def _checklist_category(row: CandidateMatchRow) -> str:

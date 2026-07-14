@@ -7,6 +7,7 @@ import pytest
 
 from odin_lunchtab.candidate_viewer import (
     AMBIGUOUS_EDIT_CHECKLIST_NAME,
+    CANDIDATE_REVIEW_DECISIONS_NAME,
     MANUAL_EDIT_CHECKLIST_NAME,
     PROPOSED_TRANSFER_AUDIT_NAME,
     PROPOSED_TRANSFER_NAME,
@@ -19,6 +20,7 @@ from odin_lunchtab.candidate_viewer import (
     summarize_candidate_match_rows,
     validate_candidate_selection_file,
     validate_candidate_selections,
+    write_candidate_review_decisions,
     write_manual_edit_checklists,
     write_proposed_transfer_from_selections,
 )
@@ -383,6 +385,68 @@ def test_candidate_review_state_allows_in_progress_ambiguous_review(
     assert state.progress.unresolved_groups == 1
     assert not state.validation().blocked
     assert validate_candidate_selections(rows, state.selection_values()).blocked
+
+
+def test_candidate_review_decision_audit_records_selected_skipped_and_unresolved(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "candidates.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Garcia, Ellie",
+                barcode="100",
+                candidate_name="Garcia, Elizabeth (Ellie)",
+                evidence="preferred name matches",
+                rank="1",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="Medium",
+                odin_student="Garcia, Ellie",
+                barcode="101",
+                candidate_name="Garcia, Ellie",
+                evidence="first name matches",
+                rank="2",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="High",
+                odin_student="Smith, Ava",
+                barcode="200",
+                candidate_name="Smith, Ava",
+                evidence="first name matches",
+                transfer_row_number="3",
+            ),
+            candidate_row(
+                confidence="High",
+                odin_student="Jones, Max",
+                barcode="300",
+                candidate_name="Jones, Max",
+                evidence="first name matches",
+                odin_id="300",
+                transfer_row_number="4",
+            ),
+        ],
+    )
+    state = create_candidate_review_state(load_candidate_match_rows(report))
+    state = state.select_candidate(state.groups[0].group_key, "101")
+    state = state.skip_group(state.groups[1].group_key)
+
+    output = write_candidate_review_decisions(state, output_dir=tmp_path / "review")
+
+    rows = read_csv_rows(tmp_path / "review" / CANDIDATE_REVIEW_DECISIONS_NAME)
+    assert output.rows == 4
+    assert output.path == tmp_path / "review" / CANDIDATE_REVIEW_DECISIONS_NAME
+    assert {(row["Candidate LoginBarcode"], row["ReviewStatus"]) for row in rows} == {
+        ("100", "NOT_SELECTED"),
+        ("101", "SELECTED"),
+        ("200", "SKIPPED"),
+        ("300", "UNRESOLVED"),
+    }
+    assert rows[1]["Notes"] == "Selected in candidate viewer and eligible for proposed transfer."
 
 
 def test_candidate_viewer_exports_manual_edit_checklists(tmp_path: Path) -> None:

@@ -306,7 +306,9 @@ workflow and prepares the viewer for direct in-app candidate selection. The cand
 viewer can mark an actionable candidate as selected, skip that candidate's exception group,
 or clear the group while showing selected/skipped/unresolved progress. Proposed transfer
 creation can use those in-app selections directly; the exported checklist workflow remains
-available as a fallback for offline review.
+available as a fallback for offline review. In-app selection runs also write
+`Candidate Review Decisions.csv` so selected, skipped, and unresolved candidate groups can
+be audited after the proposed transfer is created.
 
 ### Manual reconciliation audit artifacts
 

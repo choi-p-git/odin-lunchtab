@@ -3,6 +3,7 @@ from __future__ import annotations
 import queue
 import threading
 import tkinter as tk
+from dataclasses import replace
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -16,6 +17,7 @@ from odin_lunchtab.candidate_viewer import (
     load_candidate_match_rows,
     read_candidate_selection_values,
     summarize_candidate_match_rows,
+    write_candidate_review_decisions,
     write_manual_edit_checklists,
     write_proposed_transfer_from_selections,
 )
@@ -238,7 +240,13 @@ class CandidateMatchesWindow(tk.Toplevel):
                     "Manual Review Candidate Matches",
                     "Proposed transfer files were created:\n\n"
                     f"- {output.proposed_transfer_path.name}\n"
-                    f"- {output.audit_path.name}\n\n"
+                    f"- {output.audit_path.name}\n"
+                    + (
+                        f"- {output.review_decisions_path.name}\n"
+                        if output.review_decisions_path is not None
+                        else ""
+                    )
+                    + "\n"
                     f"Source transfer: {output.transfer_path.name}",
                 )
             elif event_name == "proposed_transfer_failed":
@@ -310,6 +318,7 @@ class CandidateMatchesWindow(tk.Toplevel):
 
         selection_file = Path(selection_path) if selection_path else None
         selections = self.review_state.selection_values() if use_review_state else None
+        review_state = self.review_state if use_review_state else None
         output_folder = Path(output_dir)
 
         def worker() -> None:
@@ -326,6 +335,16 @@ class CandidateMatchesWindow(tk.Toplevel):
                     output_dir=output_folder,
                     require_ambiguous_selection=not use_review_state,
                 )
+                if review_state is not None:
+                    decision_output = write_candidate_review_decisions(
+                        review_state,
+                        output_dir=output_folder,
+                    )
+                    output = replace(
+                        output,
+                        review_decisions_path=decision_output.path,
+                        review_decision_rows=decision_output.rows,
+                    )
             except Exception as error:
                 self.worker_events.put(("proposed_transfer_failed", error))
             else:
