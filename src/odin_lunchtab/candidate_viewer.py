@@ -667,8 +667,13 @@ def write_proposed_transfer_from_selections(
     candidate_rows: list[CandidateMatchRow],
     selections: dict[str, str],
     output_dir: Path,
+    require_ambiguous_selection: bool = True,
 ) -> ProposedTransferOutput:
-    validation = validate_candidate_selections(candidate_rows, selections)
+    validation = validate_candidate_selections(
+        candidate_rows,
+        selections,
+        require_ambiguous_selection=require_ambiguous_selection,
+    )
     if validation.blocked:
         raise ValueError(_selection_blocker_text(validation))
 

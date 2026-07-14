@@ -638,6 +638,66 @@ def test_write_proposed_transfer_applies_valid_selected_candidates_to_copy(
     assert audit_rows[0]["Status"] == "UPDATED"
 
 
+def test_write_proposed_transfer_allows_in_app_selection_with_unresolved_group(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "candidates.csv"
+    transfer = tmp_path / "transfer.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Garcia, Ellie",
+                barcode="100",
+                candidate_name="Garcia, Elizabeth (Ellie)",
+                evidence="preferred name matches",
+                rank="1",
+                odin_id="999",
+                transfer_row_number="2",
+            ),
+            candidate_row(
+                confidence="Medium",
+                odin_student="Garcia, Ellie",
+                barcode="101",
+                candidate_name="Garcia, Ellie",
+                evidence="first name matches",
+                rank="2",
+                odin_id="999",
+                transfer_row_number="3",
+            ),
+            candidate_row(
+                confidence="High",
+                odin_student="Smith, Ava",
+                barcode="200",
+                candidate_name="Smith, Ava",
+                evidence="first name matches",
+                transfer_row_number="4",
+            ),
+        ],
+    )
+    rows = load_candidate_match_rows(report)
+    state = create_candidate_review_state(rows)
+    state = state.select_candidate(state.groups[1].group_key, "200")
+    write_transfer(transfer, [transfer_row("100"), transfer_row("101"), transfer_row("200")])
+
+    output = write_proposed_transfer_from_selections(
+        transfer_path=transfer,
+        candidate_rows=rows,
+        selections=state.selection_values(),
+        output_dir=tmp_path / "proposed",
+        require_ambiguous_selection=False,
+    )
+
+    proposed_rows = read_csv_rows(tmp_path / "proposed" / PROPOSED_TRANSFER_NAME)
+    audit_rows = read_csv_rows(tmp_path / "proposed" / PROPOSED_TRANSFER_AUDIT_NAME)
+    assert output.updated_rows == 1
+    assert proposed_rows[0]["OdinBalanceAmount"] == ""
+    assert proposed_rows[1]["OdinBalanceAmount"] == ""
+    assert proposed_rows[2]["OdinBalanceAmount"] == "12.25"
+    assert audit_rows[0]["Candidate LoginBarcode"] == "200"
+
+
 def test_write_proposed_transfer_blocks_invalid_selection_and_stale_transfer(
     tmp_path: Path,
 ) -> None:

@@ -8,7 +8,9 @@ from tkinter import filedialog, messagebox, ttk
 
 from odin_lunchtab.candidate_viewer import (
     CandidateMatchRow,
+    CandidateReviewState,
     ProposedTransferOutput,
+    create_candidate_review_state,
     default_transfer_path_for_candidate_report,
     filter_candidate_match_rows,
     load_candidate_match_rows,
@@ -29,6 +31,7 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.path = path
         self.rows = load_candidate_match_rows(path)
         self.filtered_rows: list[CandidateMatchRow] = []
+        self.review_state: CandidateReviewState = create_candidate_review_state(self.rows)
         self.worker_events: queue.Queue[WorkerEvent] = queue.Queue()
         self.worker_poll_after: str | None = None
         self.proposed_transfer_running = False
@@ -37,6 +40,7 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.actionable_only = tk.BooleanVar(value=False)
         self.ambiguous_only = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar()
+        self.review_text = tk.StringVar()
         self.detail_text = tk.StringVar(value="Select a candidate row to inspect evidence.")
 
         self.title("Manual Review Candidate Matches")
@@ -101,6 +105,7 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.tree = ttk.Treeview(
             table_frame,
             columns=(
+                "review",
                 "rank",
                 "confidence",
                 "odin",
@@ -118,6 +123,7 @@ class CandidateMatchesWindow(tk.Toplevel):
             height=12,
         )
         headings = {
+            "review": ("Review", 120),
             "rank": ("Rank", 60),
             "confidence": ("Confidence", 100),
             "odin": ("Odin student", 210),
@@ -176,8 +182,21 @@ class CandidateMatchesWindow(tk.Toplevel):
         )
         ttk.Button(footer, text="Close", command=self.destroy).grid(row=0, column=5, padx=(8, 0))
 
+        ttk.Label(footer, textvariable=self.review_text).grid(
+            row=1, column=0, sticky="w", pady=(8, 0)
+        )
+        ttk.Button(footer, text="Select candidate", command=self._select_candidate_review).grid(
+            row=1, column=1, padx=(8, 0), pady=(8, 0)
+        )
+        ttk.Button(footer, text="Skip group", command=self._skip_review_group).grid(
+            row=1, column=2, padx=(8, 0), pady=(8, 0)
+        )
+        ttk.Button(footer, text="Clear group", command=self._clear_review_group).grid(
+            row=1, column=3, padx=(8, 0), pady=(8, 0)
+        )
+
         self.progress = ttk.Progressbar(footer, mode="indeterminate", length=120)
-        self.progress.grid(row=1, column=1, columnspan=5, sticky="e", pady=(8, 0))
+        self.progress.grid(row=2, column=1, columnspan=5, sticky="e", pady=(8, 0))
         self.progress.grid_remove()
 
     def _set_proposed_transfer_busy(self, busy: bool) -> None:
@@ -232,13 +251,26 @@ class CandidateMatchesWindow(tk.Toplevel):
     def _create_proposed_transfer(self) -> None:
         if self.proposed_transfer_running:
             return
-        selection_path = filedialog.askopenfilename(
-            title="Select reviewed manual edit checklist",
-            initialdir=str(self.path.parent),
-            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
-        )
-        if not selection_path:
-            return
+        progress = self.review_state.progress
+        use_review_state = False
+        selection_path: str | None = None
+        if progress.selected_candidates:
+            use_review_state = messagebox.askyesno(
+                "Manual Review Candidate Matches",
+                "Create the proposed transfer from the in-app selected candidates?\n\n"
+                f"Selected candidates: {progress.selected_candidates}\n"
+                f"Skipped groups: {progress.skipped_groups}\n"
+                f"Unresolved groups: {progress.unresolved_groups}\n\n"
+                "Choose No to select a reviewed checklist CSV instead.",
+            )
+        if not use_review_state:
+            selection_path = filedialog.askopenfilename(
+                title="Select reviewed manual edit checklist",
+                initialdir=str(self.path.parent),
+                filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+            )
+            if not selection_path:
+                return
         transfer_file = default_transfer_path_for_candidate_report(self.path)
         if transfer_file is None:
             selected_transfer_path = filedialog.askopenfilename(
@@ -276,17 +308,23 @@ class CandidateMatchesWindow(tk.Toplevel):
         self._set_proposed_transfer_busy(True)
         self.status_text.set("Creating proposed transfer copy from reviewed selections...")
 
-        selection_file = Path(selection_path)
+        selection_file = Path(selection_path) if selection_path else None
+        selections = self.review_state.selection_values() if use_review_state else None
         output_folder = Path(output_dir)
 
         def worker() -> None:
             try:
-                selections = read_candidate_selection_values(selection_file)
+                selected_values = (
+                    selections
+                    if selections is not None
+                    else read_candidate_selection_values(selection_file)
+                )
                 output = write_proposed_transfer_from_selections(
                     transfer_path=transfer_file,
                     candidate_rows=self.rows,
-                    selections=selections,
+                    selections=selected_values,
                     output_dir=output_folder,
+                    require_ambiguous_selection=not use_review_state,
                 )
             except Exception as error:
                 self.worker_events.put(("proposed_transfer_failed", error))
@@ -294,6 +332,89 @@ class CandidateMatchesWindow(tk.Toplevel):
                 self.worker_events.put(("proposed_transfer_created", output))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _review_status_for_row(self, row: CandidateMatchRow) -> str:
+        if not row.is_actionable:
+            return "Not actionable"
+        if self.review_state.selections.get(row.login_barcode) == "yes":
+            return "Selected"
+        if row.exception_group_key in self.review_state.skipped_groups:
+            return "Skipped"
+        return "Needs choice" if row.has_ambiguous_actionable_group else "Ready"
+
+    def _review_detail_for_row(self, row: CandidateMatchRow) -> str:
+        return "\n".join(
+            [
+                row.detail_text,
+                "",
+                f"Review status: {self._review_status_for_row(row)}",
+            ]
+        )
+
+    def _refresh_review_status(self) -> None:
+        progress = self.review_state.progress
+        self.review_text.set(
+            "Review progress: "
+            f"{progress.resolved_groups}/{progress.total_groups} groups resolved "
+            f"({progress.selected_groups} selected, {progress.skipped_groups} skipped, "
+            f"{progress.unresolved_groups} unresolved)."
+        )
+
+    def _selected_actionable_row(self, action: str) -> CandidateMatchRow | None:
+        row = self._selected_row()
+        if row is None:
+            messagebox.showinfo(
+                "Manual Review Candidate Matches",
+                f"Select an actionable candidate row before choosing {action}.",
+            )
+            return None
+        if not row.is_actionable:
+            messagebox.showinfo(
+                "Manual Review Candidate Matches",
+                "This row is not actionable. Choose a candidate with a unique transfer row, "
+                "blank current OdinBalanceAmount, and suggested Odin balance.",
+            )
+            return None
+        return row
+
+    def _select_candidate_review(self) -> None:
+        row = self._selected_actionable_row("Select candidate")
+        if row is None:
+            return
+        try:
+            self.review_state = self.review_state.select_candidate(
+                row.exception_group_key,
+                row.login_barcode,
+            )
+        except ValueError as error:
+            messagebox.showerror("Manual Review Candidate Matches", friendly_error(error))
+            return
+        self._apply_filter()
+        self.status_text.set(f"Selected candidate {row.login_barcode} for this Odin exception.")
+
+    def _skip_review_group(self) -> None:
+        row = self._selected_actionable_row("Skip group")
+        if row is None:
+            return
+        try:
+            self.review_state = self.review_state.skip_group(row.exception_group_key)
+        except ValueError as error:
+            messagebox.showerror("Manual Review Candidate Matches", friendly_error(error))
+            return
+        self._apply_filter()
+        self.status_text.set(f"Skipped candidate group for {row.odin_student}.")
+
+    def _clear_review_group(self) -> None:
+        row = self._selected_actionable_row("Clear group")
+        if row is None:
+            return
+        try:
+            self.review_state = self.review_state.clear_group(row.exception_group_key)
+        except ValueError as error:
+            messagebox.showerror("Manual Review Candidate Matches", friendly_error(error))
+            return
+        self._apply_filter()
+        self.status_text.set(f"Cleared review choice for {row.odin_student}.")
 
     def _open_csv(self) -> None:
         try:
@@ -316,6 +437,7 @@ class CandidateMatchesWindow(tk.Toplevel):
                 "end",
                 iid=str(index),
                 values=(
+                    self._review_status_for_row(row),
                     row.rank,
                     row.confidence,
                     f"{row.odin_student} ({row.odin_id})",
@@ -340,6 +462,7 @@ class CandidateMatchesWindow(tk.Toplevel):
             f"({summary.actionable_rows} actionable; "
             f"{summary.ambiguous_actionable_groups} ambiguous groups) from {self.path.name}"
         )
+        self._refresh_review_status()
         self._set_detail("Select a candidate row to inspect evidence.")
 
     def _selected_row(self) -> CandidateMatchRow | None:
@@ -351,7 +474,9 @@ class CandidateMatchesWindow(tk.Toplevel):
     def _select_row(self, _: tk.Event[tk.Misc] | None = None) -> None:
         row = self._selected_row()
         self._set_detail(
-            row.detail_text if row is not None else "Select a candidate row to inspect evidence."
+            self._review_detail_for_row(row)
+            if row is not None
+            else "Select a candidate row to inspect evidence."
         )
 
     def _set_detail(self, value: str) -> None:
