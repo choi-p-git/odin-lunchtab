@@ -189,6 +189,132 @@ class CandidateSelectionValidation:
 
 
 @dataclass(frozen=True)
+class CandidateReviewGroup:
+    group_key: str
+    reason: str
+    odin_id: str
+    odin_student: str
+    odin_balance: str
+    rows: tuple[CandidateMatchRow, ...]
+
+    @property
+    def actionable_rows(self) -> tuple[CandidateMatchRow, ...]:
+        return tuple(row for row in self.rows if row.is_actionable)
+
+    @property
+    def is_actionable(self) -> bool:
+        return bool(self.actionable_rows)
+
+    @property
+    def requires_choice(self) -> bool:
+        return len(self.actionable_rows) > 1
+
+
+@dataclass(frozen=True)
+class CandidateReviewProgress:
+    total_groups: int
+    resolved_groups: int
+    selected_groups: int
+    skipped_groups: int
+    unresolved_groups: int
+    selected_candidates: int
+
+
+@dataclass(frozen=True)
+class CandidateReviewState:
+    groups: tuple[CandidateReviewGroup, ...]
+    selections: dict[str, str]
+    skipped_groups: frozenset[str]
+
+    @property
+    def progress(self) -> CandidateReviewProgress:
+        selected_groups = 0
+        selected_candidates = 0
+        for group in self.groups:
+            group_selected = [
+                row
+                for row in group.actionable_rows
+                if self.selections.get(row.login_barcode) == "yes"
+            ]
+            if group_selected:
+                selected_groups += 1
+                selected_candidates += len(group_selected)
+        skipped_groups = len(self.skipped_groups)
+        resolved_groups = selected_groups + skipped_groups
+        return CandidateReviewProgress(
+            total_groups=len(self.groups),
+            resolved_groups=resolved_groups,
+            selected_groups=selected_groups,
+            skipped_groups=skipped_groups,
+            unresolved_groups=max(len(self.groups) - resolved_groups, 0),
+            selected_candidates=selected_candidates,
+        )
+
+    def select_candidate(self, group_key: str, login_barcode: str) -> CandidateReviewState:
+        group = self._group_by_key(group_key)
+        if group is None:
+            raise ValueError(f"Unknown review group: {group_key}")
+        selected = next(
+            (row for row in group.actionable_rows if row.login_barcode == login_barcode),
+            None,
+        )
+        if selected is None:
+            raise ValueError(f"Candidate {login_barcode} is not actionable for this group.")
+        selections = dict(self.selections)
+        for row in group.actionable_rows:
+            selections[row.login_barcode] = "yes" if row.login_barcode == login_barcode else ""
+        return CandidateReviewState(
+            groups=self.groups,
+            selections=selections,
+            skipped_groups=frozenset(key for key in self.skipped_groups if key != group_key),
+        )
+
+    def skip_group(self, group_key: str) -> CandidateReviewState:
+        group = self._group_by_key(group_key)
+        if group is None:
+            raise ValueError(f"Unknown review group: {group_key}")
+        selections = dict(self.selections)
+        for row in group.actionable_rows:
+            selections[row.login_barcode] = ""
+        return CandidateReviewState(
+            groups=self.groups,
+            selections=selections,
+            skipped_groups=frozenset({*self.skipped_groups, group_key}),
+        )
+
+    def clear_group(self, group_key: str) -> CandidateReviewState:
+        group = self._group_by_key(group_key)
+        if group is None:
+            raise ValueError(f"Unknown review group: {group_key}")
+        selections = dict(self.selections)
+        for row in group.actionable_rows:
+            selections[row.login_barcode] = ""
+        return CandidateReviewState(
+            groups=self.groups,
+            selections=selections,
+            skipped_groups=frozenset(key for key in self.skipped_groups if key != group_key),
+        )
+
+    def selection_values(self) -> dict[str, str]:
+        return {
+            row.login_barcode: self.selections.get(row.login_barcode, "")
+            for group in self.groups
+            for row in group.actionable_rows
+            if row.login_barcode
+        }
+
+    def validation(self) -> CandidateSelectionValidation:
+        return validate_candidate_selections(
+            [row for group in self.groups for row in group.rows],
+            self.selection_values(),
+            require_ambiguous_selection=False,
+        )
+
+    def _group_by_key(self, group_key: str) -> CandidateReviewGroup | None:
+        return next((group for group in self.groups if group.group_key == group_key), None)
+
+
+@dataclass(frozen=True)
 class ProposedTransferOutput:
     proposed_transfer_path: Path
     audit_path: Path
@@ -298,6 +424,31 @@ def summarize_candidate_match_rows(rows: list[CandidateMatchRow]) -> CandidateMa
     )
 
 
+def build_candidate_review_groups(
+    rows: list[CandidateMatchRow],
+) -> tuple[CandidateReviewGroup, ...]:
+    grouped: dict[str, list[CandidateMatchRow]] = {}
+    for row in rows:
+        if row.is_actionable and row.exception_group_key:
+            grouped.setdefault(row.exception_group_key, []).append(row)
+    return tuple(
+        CandidateReviewGroup(
+            group_key=group_key,
+            reason=group_rows[0].reason,
+            odin_id=group_rows[0].odin_id,
+            odin_student=group_rows[0].odin_student,
+            odin_balance=group_rows[0].odin_balance,
+            rows=tuple(group_rows),
+        )
+        for group_key, group_rows in grouped.items()
+    )
+
+
+def create_candidate_review_state(rows: list[CandidateMatchRow]) -> CandidateReviewState:
+    groups = build_candidate_review_groups(rows)
+    return CandidateReviewState(groups=groups, selections={}, skipped_groups=frozenset())
+
+
 def _checklist_category(row: CandidateMatchRow) -> str:
     return (
         "Ambiguous - choose one candidate"
@@ -383,6 +534,8 @@ def _selected_value(value: str) -> bool | None:
 def validate_candidate_selections(
     rows: list[CandidateMatchRow],
     selections: dict[str, str],
+    *,
+    require_ambiguous_selection: bool = True,
 ) -> CandidateSelectionValidation:
     rows_by_barcode = {row.login_barcode: row for row in rows}
     issues: list[CandidateSelectionIssue] = []
@@ -441,7 +594,11 @@ def validate_candidate_selections(
     }
     for group_key, exemplar in actionable_groups.items():
         group_selected = selected_by_group.get(group_key, [])
-        if exemplar.has_ambiguous_actionable_group and not group_selected:
+        if (
+            require_ambiguous_selection
+            and exemplar.has_ambiguous_actionable_group
+            and not group_selected
+        ):
             issues.append(
                 CandidateSelectionIssue(
                     severity="BLOCKING",

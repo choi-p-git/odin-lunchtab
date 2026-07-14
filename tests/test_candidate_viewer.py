@@ -10,6 +10,8 @@ from odin_lunchtab.candidate_viewer import (
     MANUAL_EDIT_CHECKLIST_NAME,
     PROPOSED_TRANSFER_AUDIT_NAME,
     PROPOSED_TRANSFER_NAME,
+    build_candidate_review_groups,
+    create_candidate_review_state,
     default_transfer_path_for_candidate_report,
     filter_candidate_match_rows,
     load_candidate_match_rows,
@@ -239,6 +241,148 @@ def test_candidate_viewer_flags_ambiguous_actionable_groups(tmp_path: Path) -> N
     assert summary.actionable_rows == 3
     assert summary.ambiguous_actionable_rows == 2
     assert summary.ambiguous_actionable_groups == 1
+
+
+def test_candidate_review_groups_include_only_actionable_exception_work_items(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "candidates.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Garcia, Ellie",
+                barcode="100",
+                candidate_name="Garcia, Elizabeth (Ellie)",
+                evidence="preferred name matches",
+                rank="1",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="Medium",
+                odin_student="Garcia, Ellie",
+                barcode="101",
+                candidate_name="Garcia, Ellie",
+                evidence="first name matches",
+                rank="2",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="Low",
+                odin_student="Jones, Max",
+                barcode="300",
+                candidate_name="Jones, Max",
+                evidence="first initial matches",
+                trace_status="candidate not found in transfer",
+            ),
+            candidate_row(
+                confidence="High",
+                odin_student="Smith, Ava",
+                barcode="200",
+                candidate_name="Smith, Ava",
+                evidence="first name matches",
+                transfer_row_number="3",
+            ),
+        ],
+    )
+
+    groups = build_candidate_review_groups(load_candidate_match_rows(report))
+
+    assert len(groups) == 2
+    assert [group.odin_student for group in groups] == ["Garcia, Ellie", "Smith, Ava"]
+    assert [group.requires_choice for group in groups] == [True, False]
+    assert [[row.login_barcode for row in group.actionable_rows] for group in groups] == [
+        ["100", "101"],
+        ["200"],
+    ]
+
+
+def test_candidate_review_state_tracks_selection_skip_and_progress(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "candidates.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Garcia, Ellie",
+                barcode="100",
+                candidate_name="Garcia, Elizabeth (Ellie)",
+                evidence="preferred name matches",
+                rank="1",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="Medium",
+                odin_student="Garcia, Ellie",
+                barcode="101",
+                candidate_name="Garcia, Ellie",
+                evidence="first name matches",
+                rank="2",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="High",
+                odin_student="Smith, Ava",
+                barcode="200",
+                candidate_name="Smith, Ava",
+                evidence="first name matches",
+                transfer_row_number="3",
+            ),
+        ],
+    )
+    state = create_candidate_review_state(load_candidate_match_rows(report))
+    ambiguous_key = state.groups[0].group_key
+    single_key = state.groups[1].group_key
+
+    state = state.select_candidate(ambiguous_key, "101")
+    state = state.skip_group(single_key)
+
+    assert state.selection_values() == {"100": "", "101": "yes", "200": ""}
+    assert state.progress.total_groups == 2
+    assert state.progress.resolved_groups == 2
+    assert state.progress.selected_groups == 1
+    assert state.progress.skipped_groups == 1
+    assert state.progress.unresolved_groups == 0
+    assert state.progress.selected_candidates == 1
+    assert not state.validation().blocked
+
+
+def test_candidate_review_state_allows_in_progress_ambiguous_review(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "candidates.csv"
+    write_candidates(
+        report,
+        [
+            candidate_row(
+                confidence="High",
+                odin_student="Garcia, Ellie",
+                barcode="100",
+                candidate_name="Garcia, Elizabeth (Ellie)",
+                evidence="preferred name matches",
+                rank="1",
+                odin_id="999",
+            ),
+            candidate_row(
+                confidence="Medium",
+                odin_student="Garcia, Ellie",
+                barcode="101",
+                candidate_name="Garcia, Ellie",
+                evidence="first name matches",
+                rank="2",
+                odin_id="999",
+            ),
+        ],
+    )
+    rows = load_candidate_match_rows(report)
+    state = create_candidate_review_state(rows)
+
+    assert state.progress.unresolved_groups == 1
+    assert not state.validation().blocked
+    assert validate_candidate_selections(rows, state.selection_values()).blocked
 
 
 def test_candidate_viewer_exports_manual_edit_checklists(tmp_path: Path) -> None:

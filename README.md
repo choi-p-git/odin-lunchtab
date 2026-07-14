@@ -300,6 +300,10 @@ the matching `Processed - Odin to Lunchtab Balance Transfer.csv` in that folder 
 not have to hunt for the source transfer file. If that file is missing or the operator
 declines it, the viewer asks for the transfer CSV explicitly.
 
+Internally, candidate review rows are grouped by Odin exception so the workflow can track
+selected, skipped, and unresolved exception accounts. This supports the current checklist
+workflow and prepares the viewer for direct in-app candidate selection.
+
 ### Manual reconciliation audit artifacts
 
 When staff manually edit the reconciled transfer CSV to resolve exception accounts, the
