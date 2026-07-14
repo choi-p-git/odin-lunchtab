@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 from odin_lunchtab.candidate_viewer import (
     CandidateMatchRow,
     ProposedTransferOutput,
+    default_transfer_path_for_candidate_report,
     filter_candidate_match_rows,
     load_candidate_match_rows,
     read_candidate_selection_values,
@@ -218,7 +219,8 @@ class CandidateMatchesWindow(tk.Toplevel):
                     "Manual Review Candidate Matches",
                     "Proposed transfer files were created:\n\n"
                     f"- {output.proposed_transfer_path.name}\n"
-                    f"- {output.audit_path.name}",
+                    f"- {output.audit_path.name}\n\n"
+                    f"Source transfer: {output.transfer_path.name}",
                 )
             elif event_name == "proposed_transfer_failed":
                 self._set_proposed_transfer_busy(False)
@@ -237,12 +239,32 @@ class CandidateMatchesWindow(tk.Toplevel):
         )
         if not selection_path:
             return
-        transfer_path = filedialog.askopenfilename(
-            title="Select original transfer CSV",
-            initialdir=str(self.path.parent),
-            filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
-        )
-        if not transfer_path:
+        transfer_file = default_transfer_path_for_candidate_report(self.path)
+        if transfer_file is None:
+            selected_transfer_path = filedialog.askopenfilename(
+                title="Select original transfer CSV",
+                initialdir=str(self.path.parent),
+                filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+            )
+            if not selected_transfer_path:
+                return
+            transfer_file = Path(selected_transfer_path)
+        elif not messagebox.askyesno(
+            "Manual Review Candidate Matches",
+            "Use the matching transfer CSV from this run folder?\n\n"
+            f"{transfer_file.name}\n\n"
+            "Choose No to select a different transfer CSV.",
+        ):
+            selected_transfer_path = filedialog.askopenfilename(
+                title="Select original transfer CSV",
+                initialdir=str(self.path.parent),
+                initialfile=transfer_file.name,
+                filetypes=(("CSV files", "*.csv"), ("All files", "*.*")),
+            )
+            if not selected_transfer_path:
+                return
+            transfer_file = Path(selected_transfer_path)
+        if not transfer_file:
             return
         output_dir = filedialog.askdirectory(
             title="Choose folder for proposed transfer files",
@@ -255,7 +277,6 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.status_text.set("Creating proposed transfer copy from reviewed selections...")
 
         selection_file = Path(selection_path)
-        transfer_file = Path(transfer_path)
         output_folder = Path(output_dir)
 
         def worker() -> None:

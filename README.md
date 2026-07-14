@@ -295,6 +295,10 @@ by the viewer's **Create proposed transfer** action to validate that selected ro
 actionable and that each ambiguous Odin exception has exactly one chosen candidate.
 Validated selections are written to `Proposed Edited Transfer - Candidate Selections.csv`
 plus `Proposed Transfer Selection Audit.csv`; the original transfer CSV remains unchanged.
+When the candidate report is opened from a standard run folder, the viewer offers to use
+the matching `Processed - Odin to Lunchtab Balance Transfer.csv` in that folder so staff do
+not have to hunt for the source transfer file. If that file is missing or the operator
+declines it, the viewer asks for the transfer CSV explicitly.
 
 ### Manual reconciliation audit artifacts
 

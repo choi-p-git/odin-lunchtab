@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from odin_lunchtab.exception_candidates import CANDIDATE_HEADERS
-from odin_lunchtab.workflow import read_csv
+from odin_lunchtab.workflow import FINAL_OUTPUT_NAME, read_csv
 
 MANUAL_EDIT_CHECKLIST_NAME = "Manual Edit Checklist - Actionable Candidates.csv"
 AMBIGUOUS_EDIT_CHECKLIST_NAME = "Manual Edit Checklist - Ambiguous Candidates.csv"
@@ -193,6 +193,12 @@ class ProposedTransferOutput:
     proposed_transfer_path: Path
     audit_path: Path
     updated_rows: int
+    transfer_path: Path
+
+
+def default_transfer_path_for_candidate_report(candidate_report_path: Path) -> Path | None:
+    transfer_path = candidate_report_path.parent / FINAL_OUTPUT_NAME
+    return transfer_path if transfer_path.is_file() else None
 
 
 def _group_key(row: CandidateMatchRow) -> str:
@@ -564,4 +570,5 @@ def write_proposed_transfer_from_selections(
         proposed_transfer_path=proposed_path,
         audit_path=audit_path,
         updated_rows=len(audit_rows),
+        transfer_path=transfer_path,
     )

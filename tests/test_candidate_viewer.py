@@ -10,6 +10,7 @@ from odin_lunchtab.candidate_viewer import (
     MANUAL_EDIT_CHECKLIST_NAME,
     PROPOSED_TRANSFER_AUDIT_NAME,
     PROPOSED_TRANSFER_NAME,
+    default_transfer_path_for_candidate_report,
     filter_candidate_match_rows,
     load_candidate_match_rows,
     read_candidate_selection_values,
@@ -20,6 +21,7 @@ from odin_lunchtab.candidate_viewer import (
     write_proposed_transfer_from_selections,
 )
 from odin_lunchtab.exception_candidates import CANDIDATE_HEADERS
+from odin_lunchtab.workflow import FINAL_OUTPUT_NAME
 
 
 def write_candidates(path: Path, rows: list[dict[str, str]]) -> None:
@@ -50,6 +52,20 @@ def write_transfer(path: Path, rows: list[dict[str, str]]) -> None:
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
     with path.open(encoding="utf-8-sig", newline="") as file:
         return list(csv.DictReader(file))
+
+
+def test_default_transfer_path_for_candidate_report_uses_run_folder_artifact(
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "Manual Review Candidate Matches.csv"
+    transfer = tmp_path / FINAL_OUTPUT_NAME
+    report.write_text("", encoding="utf-8")
+
+    assert default_transfer_path_for_candidate_report(report) is None
+
+    transfer.write_text("", encoding="utf-8")
+
+    assert default_transfer_path_for_candidate_report(report) == transfer
 
 
 def candidate_row(
@@ -470,6 +486,7 @@ def test_write_proposed_transfer_applies_valid_selected_candidates_to_copy(
     proposed_rows = read_csv_rows(tmp_path / "proposed" / PROPOSED_TRANSFER_NAME)
     audit_rows = read_csv_rows(tmp_path / "proposed" / PROPOSED_TRANSFER_AUDIT_NAME)
     assert output.updated_rows == 1
+    assert output.transfer_path == transfer
     assert original_rows[1]["OdinBalanceAmount"] == ""
     assert proposed_rows[1]["OdinBalanceAmount"] == "12.25"
     assert proposed_rows[0]["OdinBalanceAmount"] == ""
