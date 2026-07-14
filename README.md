@@ -291,22 +291,25 @@ updating `OdinBalanceAmount`. The viewer can also export two advisory checklist 
 `Manual Edit Checklist - Actionable Candidates.csv` for single-candidate manual edits and
 `Manual Edit Checklist - Ambiguous Candidates.csv` for cases where staff must choose among
 multiple actionable candidates. The checklist includes a `Selected` column that can be used
-by the viewer's **Create proposed transfer** action to validate that selected rows are
+by the viewer's **Create from selections/checklist...** action to validate that selected rows are
 actionable and that each ambiguous Odin exception has exactly one chosen candidate.
 Validated selections are written to `Proposed Edited Transfer - Candidate Selections.csv`
 plus `Proposed Transfer Selection Audit.csv`; the original transfer CSV remains unchanged.
 When the candidate report is opened from a standard run folder, the viewer offers to use
 the matching `Processed - Odin to Lunchtab Balance Transfer.csv` in that folder so staff do
 not have to hunt for the source transfer file. If that file is missing or the operator
-declines it, the viewer asks for the transfer CSV explicitly.
+declines it, the viewer asks for the transfer CSV explicitly. Proposed-transfer files are
+written to the output folder chosen by the operator; this step does not create a separate
+timestamped run folder. After creation, **Open output folder** opens the selected folder.
 
 Internally, candidate review rows are grouped by Odin exception so the workflow can track
 selected, skipped, and unresolved exception accounts. This supports the current checklist
 workflow and prepares the viewer for direct in-app candidate selection. The candidate
 viewer can mark an actionable candidate as selected, skip that candidate's exception group,
-or clear the group while showing selected/skipped/unresolved progress. Proposed transfer
-creation can use those in-app selections directly; the exported checklist workflow remains
-available as a fallback for offline review. In-app selection runs also write
+or clear the group while showing selected/skipped/unresolved progress. **Review mode**
+switches the table to actionable rows and a narrower decision-focused column layout.
+Proposed transfer creation can use those in-app selections directly; the exported checklist
+workflow remains available as a fallback for offline review. In-app selection runs also write
 `Candidate Review Decisions.csv` so selected, skipped, and unresolved candidate groups can
 be audited after the proposed transfer is created.
 

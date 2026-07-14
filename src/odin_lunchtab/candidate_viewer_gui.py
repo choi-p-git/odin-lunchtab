@@ -25,6 +25,16 @@ from odin_lunchtab.desktop import friendly_error, open_path
 from odin_lunchtab.ui_helpers import add_tree_scrollbars, size_and_center
 
 WorkerEvent = tuple[str, ProposedTransferOutput | Exception]
+REVIEW_MODE_COLUMNS = (
+    "review",
+    "odin",
+    "candidate",
+    "barcode",
+    "transfer_row",
+    "suggested_balance",
+    "ambiguity",
+    "evidence",
+)
 
 
 class CandidateMatchesWindow(tk.Toplevel):
@@ -41,9 +51,11 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.confidence_text = tk.StringVar(value="All")
         self.actionable_only = tk.BooleanVar(value=False)
         self.ambiguous_only = tk.BooleanVar(value=False)
+        self.review_mode = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar()
         self.review_text = tk.StringVar()
         self.detail_text = tk.StringVar(value="Select a candidate row to inspect evidence.")
+        self.last_output_dir: Path | None = None
 
         self.title("Manual Review Candidate Matches")
         size_and_center(self, 1100, 720)
@@ -54,6 +66,7 @@ class CandidateMatchesWindow(tk.Toplevel):
         self.confidence_text.trace_add("write", lambda *_: self._apply_filter())
         self.actionable_only.trace_add("write", lambda *_: self._apply_filter())
         self.ambiguous_only.trace_add("write", lambda *_: self._apply_filter())
+        self.review_mode.trace_add("write", lambda *_: self._apply_filter())
         self.bind("<Destroy>", self._on_destroy, add="+")
         self._schedule_worker_poll()
 
@@ -97,6 +110,11 @@ class CandidateMatchesWindow(tk.Toplevel):
             text="Ambiguous only",
             variable=self.ambiguous_only,
         ).grid(row=3, column=2, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Checkbutton(
+            header,
+            text="Review mode",
+            variable=self.review_mode,
+        ).grid(row=3, column=3, sticky="e", pady=(8, 0))
 
         body = ttk.PanedWindow(self, orient="vertical")
         body.grid(row=1, column=0, sticky="nsew", padx=16)
@@ -175,14 +193,21 @@ class CandidateMatchesWindow(tk.Toplevel):
         )
         self.propose_button = ttk.Button(
             footer,
-            text="Create proposed transfer",
+            text="Create from selections/checklist...",
             command=self._create_proposed_transfer,
         )
         self.propose_button.grid(row=0, column=3, padx=(8, 0))
-        ttk.Button(footer, text="Open CSV", command=self._open_csv).grid(
-            row=0, column=4, padx=(8, 0)
+        self.open_output_button = ttk.Button(
+            footer,
+            text="Open output folder",
+            command=self._open_output_folder,
+            state="disabled",
         )
-        ttk.Button(footer, text="Close", command=self.destroy).grid(row=0, column=5, padx=(8, 0))
+        self.open_output_button.grid(row=0, column=4, padx=(8, 0))
+        ttk.Button(footer, text="Open CSV", command=self._open_csv).grid(
+            row=0, column=5, padx=(8, 0)
+        )
+        ttk.Button(footer, text="Close", command=self.destroy).grid(row=0, column=6, padx=(8, 0))
 
         ttk.Label(footer, textvariable=self.review_text).grid(
             row=1, column=0, sticky="w", pady=(8, 0)
@@ -198,7 +223,7 @@ class CandidateMatchesWindow(tk.Toplevel):
         )
 
         self.progress = ttk.Progressbar(footer, mode="indeterminate", length=120)
-        self.progress.grid(row=2, column=1, columnspan=5, sticky="e", pady=(8, 0))
+        self.progress.grid(row=2, column=1, columnspan=6, sticky="e", pady=(8, 0))
         self.progress.grid_remove()
 
     def _set_proposed_transfer_busy(self, busy: bool) -> None:
@@ -210,6 +235,12 @@ class CandidateMatchesWindow(tk.Toplevel):
         else:
             self.progress.stop()
             self.progress.grid_remove()
+
+    def _apply_review_mode_layout(self) -> None:
+        if self.review_mode.get():
+            self.tree.configure(displaycolumns=REVIEW_MODE_COLUMNS)
+        else:
+            self.tree.configure(displaycolumns="#all")
 
     def _schedule_worker_poll(self) -> None:
         self.worker_poll_after = self.after(100, self._poll_worker_events)
@@ -236,6 +267,8 @@ class CandidateMatchesWindow(tk.Toplevel):
                 self.status_text.set(
                     f"Proposed transfer created: {output.updated_rows} selected update(s)."
                 )
+                self.last_output_dir = output.proposed_transfer_path.parent
+                self.open_output_button.configure(state="normal")
                 messagebox.showinfo(
                     "Manual Review Candidate Matches",
                     "Proposed transfer files were created:\n\n"
@@ -441,12 +474,25 @@ class CandidateMatchesWindow(tk.Toplevel):
         except Exception as error:
             messagebox.showerror("Manual Review Candidate Matches", friendly_error(error))
 
+    def _open_output_folder(self) -> None:
+        if self.last_output_dir is None:
+            messagebox.showinfo(
+                "Manual Review Candidate Matches",
+                "Create a proposed transfer before opening the output folder.",
+            )
+            return
+        try:
+            open_path(self.last_output_dir)
+        except Exception as error:
+            messagebox.showerror("Manual Review Candidate Matches", friendly_error(error))
+
     def _apply_filter(self) -> None:
+        self._apply_review_mode_layout()
         self.filtered_rows = filter_candidate_match_rows(
             self.rows,
             query=self.search_text.get(),
             confidence=self.confidence_text.get(),
-            actionable_only=self.actionable_only.get(),
+            actionable_only=self.actionable_only.get() or self.review_mode.get(),
             ambiguous_only=self.ambiguous_only.get(),
         )
         self.tree.delete(*self.tree.get_children())
@@ -480,6 +526,7 @@ class CandidateMatchesWindow(tk.Toplevel):
             f"Showing {len(self.filtered_rows)} of {len(self.rows)} candidate rows "
             f"({summary.actionable_rows} actionable; "
             f"{summary.ambiguous_actionable_groups} ambiguous groups) from {self.path.name}"
+            + ("; review mode is showing actionable rows" if self.review_mode.get() else "")
         )
         self._refresh_review_status()
         self._set_detail("Select a candidate row to inspect evidence.")
