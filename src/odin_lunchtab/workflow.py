@@ -13,11 +13,19 @@ from typing import Iterable
 
 from openpyxl import load_workbook
 from openpyxl.cell.cell import Cell
+from odin_lunchtab.audit_control import (
+    RECONCILIATION_AUDIT_CONTROL_NAME,
+    write_reconciliation_audit_control,
+)
 from odin_lunchtab.profiles import (
     LEGACY_DEFAULT_PROFILE,
     CrosswalkEntry,
     MatchingProfile,
     parse_email_address,
+)
+from odin_lunchtab.run_reports import (
+    RECONCILIATION_RUN_SUMMARY_NAME,
+    write_reconciliation_run_summary,
 )
 
 ODIN_HEADERS = (
@@ -61,6 +69,7 @@ AUDIT_HEADERS = (
     "Transformed Value",
     "Matched Target Field",
     "Match Method",
+    "OdinBalanceAmount",
 )
 FINAL_OUTPUT_NAME = "Processed - Odin to Lunchtab Balance Transfer.csv"
 EXCEPTIONS_OUTPUT_NAME = "Processed - Odin to Lunchtab Balance Transfer - Exceptions.csv"
@@ -128,6 +137,9 @@ class OutputPaths:
     exceptions: Path
     manual_review_exceptions: Path
     match_audit: Path | None = None
+    audit_control: Path | None = None
+    run_summary: Path | None = None
+    candidate_matches: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +155,7 @@ class RunSummary:
     profile_name: str = "Legacy Default"
     profile_schema_version: int = 2
     matches_by_rule: dict[str, int] | None = None
+    audit_control_status: str = "PASS"
 
 
 @dataclass(frozen=True)
@@ -383,6 +396,9 @@ def _output_paths(output_dir: Path, odin_path: Path) -> OutputPaths:
         exceptions=output_dir / EXCEPTIONS_OUTPUT_NAME,
         manual_review_exceptions=output_dir / MANUAL_REVIEW_EXCEPTIONS_OUTPUT_NAME,
         match_audit=output_dir / MATCH_AUDIT_OUTPUT_NAME,
+        audit_control=output_dir / RECONCILIATION_AUDIT_CONTROL_NAME,
+        run_summary=output_dir / RECONCILIATION_RUN_SUMMARY_NAME,
+        candidate_matches=output_dir / "Manual Review Candidate Matches.csv",
     )
 
 
@@ -493,6 +509,7 @@ def _audit_row(
         "Transformed Value": decision.transformed_value,
         "Matched Target Field": decision.target_field,
         "Match Method": decision.method,
+        "OdinBalanceAmount": decision.record.balance,
     }
 
 
@@ -821,6 +838,14 @@ def run_workflow(
         EXCEPTION_HEADERS,
         manual_review_exceptions,
     )
+    from odin_lunchtab.exception_candidates import write_manual_review_candidate_report
+
+    write_manual_review_candidate_report(
+        manual_review_exceptions_path=paths.manual_review_exceptions,
+        lunchtab_path=lunchtab_path,
+        output_dir=output_dir,
+        transfer_path=paths.transfer,
+    )
     if paths.match_audit is not None:
         _write_csv(
             paths.match_audit,
@@ -829,6 +854,37 @@ def run_workflow(
                 _audit_row(decision, users[decision.target_index], profile)
                 for decision in result.decisions
             ),
+        )
+    audit_control_status = "PASS"
+    if paths.audit_control is not None and paths.match_audit is not None:
+        audit_control_status = write_reconciliation_audit_control(
+            path=paths.audit_control,
+            records=records,
+            malformed=malformed,
+            decisions=result.decisions,
+            exceptions=exceptions,
+            processed_odin_name=paths.processed.name,
+            match_audit_name=paths.match_audit.name,
+            exceptions_name=paths.exceptions.name,
+        )
+        if audit_control_status != "PASS":
+            raise RuntimeError("Reconciliation audit-control totals failed the integrity audit.")
+    if paths.run_summary is not None and paths.audit_control is not None:
+        write_reconciliation_run_summary(
+            path=paths.run_summary,
+            profile_name=profile.name,
+            valid_odin_rows=len(records),
+            malformed_rows=len(malformed),
+            matched_by_id=counts["id"] + counts["rule"] + counts["crosswalk"],
+            matched_by_name=counts["name"],
+            exceptions=len(exceptions),
+            manual_review_exceptions=len(manual_review_exceptions),
+            lunchtab_rows=len(users),
+            audit_control_status=audit_control_status,
+            audit_control_name=paths.audit_control.name,
+            manual_review_name=paths.manual_review_exceptions.name,
+            exceptions_name=paths.exceptions.name,
+            transfer_name=paths.transfer.name,
         )
 
     return RunSummary(
@@ -847,4 +903,5 @@ def run_workflow(
             for key, value in counts.items()
             if key.startswith("rule:")
         },
+        audit_control_status=audit_control_status,
     )

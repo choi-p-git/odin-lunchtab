@@ -8,9 +8,11 @@ import pytest
 from openpyxl import Workbook
 
 from odin_lunchtab.workflow import (
+    AUDIT_HEADERS,
     EXCEPTIONS_OUTPUT_NAME,
     FINAL_OUTPUT_NAME,
     MANUAL_REVIEW_EXCEPTIONS_OUTPUT_NAME,
+    MATCH_AUDIT_OUTPUT_NAME,
     OdinRecord,
     extract_odin_report,
     match_balances,
@@ -19,6 +21,8 @@ from odin_lunchtab.workflow import (
     run_workflow,
     split_student_name,
 )
+from odin_lunchtab.audit_control import RECONCILIATION_AUDIT_CONTROL_NAME
+from odin_lunchtab.run_reports import RECONCILIATION_RUN_SUMMARY_NAME
 
 
 def write_odin(path: Path, rows: list[list[object]]) -> None:
@@ -336,6 +340,11 @@ def test_end_to_end_writes_expected_files_columns_and_rows(tmp_path: Path) -> No
     assert (output / FINAL_OUTPUT_NAME).read_bytes().startswith(b"\xef\xbb\xbf")
     assert rows[0]["OdinBalanceAmount"] == "6.5"
     assert rows[1]["OdinBalanceAmount"] == ""
+    with (output / MATCH_AUDIT_OUTPUT_NAME).open(encoding="utf-8-sig", newline="") as file:
+        audit_reader = csv.DictReader(file)
+        audit_rows = list(audit_reader)
+    assert audit_reader.fieldnames == list(AUDIT_HEADERS)
+    assert audit_rows[0]["OdinBalanceAmount"] == "6.5"
     with (output / EXCEPTIONS_OUTPUT_NAME).open(encoding="utf-8-sig", newline="") as file:
         exceptions = list(csv.DictReader(file))
     assert [row["Reason"] for row in exceptions] == [
@@ -353,3 +362,48 @@ def test_end_to_end_writes_expected_files_columns_and_rows(tmp_path: Path) -> No
 
     with pytest.raises(FileExistsError):
         run_workflow(raw_data_dir=raw, output_dir=output)
+
+
+def test_reconciliation_audit_control_reconciles_matched_exceptions_and_malformed(
+    tmp_path: Path,
+) -> None:
+    raw = tmp_path / "Raw Data"
+    output = tmp_path / "Processed Data"
+    raw.mkdir()
+    report = raw / "Account Report.xlsx"
+    lunchtab = raw / "Lunchtab Users.csv"
+    write_odin(
+        report,
+        [
+            ["Student Debit", "001", 10, 3.5, 6.5, "Smith, Ava"],
+            ["Student Debit", "999", 5, 0, 5, "Missing, Person"],
+            ["Student Debit", "bad", 5, 0, "not-money", "Bad, Balance"],
+        ],
+    )
+    write_lunchtab(lunchtab, [user("001", "Smith", "Ava")])
+
+    summary = run_workflow(raw_data_dir=raw, output_dir=output)
+
+    assert summary.audit_control_status == "PASS"
+    control_path = output / RECONCILIATION_AUDIT_CONTROL_NAME
+    assert summary.output_paths.audit_control == control_path
+    assert summary.output_paths.run_summary == output / RECONCILIATION_RUN_SUMMARY_NAME
+    assert summary.output_paths.run_summary.is_file()
+    summary_text = summary.output_paths.run_summary.read_text(encoding="utf-8")
+    assert "Audit-control status: PASS" in summary_text
+    assert (
+        "Review `Manual Review Exceptions - Odin to Lunchtab Balance Transfer.csv`" in summary_text
+    )
+    with control_path.open(encoding="utf-8-sig", newline="") as file:
+        rows = list(csv.DictReader(file))
+
+    assert {
+        (row["Category"], row["Subcategory"], row["RowCount"], row["AmountTotal"]) for row in rows
+    } >= {
+        ("Source", "Valid Odin source rows", "2", "11.5"),
+        ("Matched", "id: Exact LoginBarcode", "1", "6.5"),
+        ("Exception", "no Lunchtab match", "1", "5"),
+        ("Excluded", "Malformed Odin row: invalid monetary value", "1", ""),
+        ("Control Total", "Valid source = matched + valid exceptions", "2", "11.5"),
+    }
+    assert rows[-1]["ControlStatus"] == "PASS"

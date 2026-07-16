@@ -10,15 +10,19 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
 from odin_lunchtab.app_logging import configure_logging
+from odin_lunchtab.candidate_viewer_gui import CandidateMatchesWindow
 from odin_lunchtab.desktop import friendly_error, open_path
 from odin_lunchtab.gui_controller import (
     AppController,
     AppPhase,
     InitialBalancesController,
     InitialBalancesPhase,
+    ManualReconciliationController,
+    ManualReconciliationPhase,
 )
 from odin_lunchtab.initial_balances import (
     inspect_initial_balances_inputs,
+    preflight_initial_balances_transfer,
     run_initial_balances_workflow,
 )
 from odin_lunchtab.managed import (
@@ -28,6 +32,7 @@ from odin_lunchtab.managed import (
     preview_profile,
     run_managed_workflow,
 )
+from odin_lunchtab.manual_reconciliation import run_manual_reconciliation_workflow
 from odin_lunchtab.profile_gui import PreviewWindow, ProfileManager
 from odin_lunchtab.profiles import list_profiles
 from odin_lunchtab.ui_helpers import (
@@ -48,6 +53,7 @@ class BalanceTransferApp:
         self.root = root
         self.controller = AppController(default_output_root())
         self.initial_controller = InitialBalancesController(default_output_root())
+        self.manual_controller = ManualReconciliationController(default_output_root())
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.logger = configure_logging()
         self.profiles = list_profiles()
@@ -69,6 +75,10 @@ class BalanceTransferApp:
         self.initial_balances_text = tk.StringVar()
         self.initial_status_text = tk.StringVar(value=self.initial_controller.state.message)
         self.initial_details_text = tk.StringVar()
+        self.manual_original_text = tk.StringVar()
+        self.manual_edited_text = tk.StringVar()
+        self.manual_status_text = tk.StringVar(value=self.manual_controller.state.message)
+        self.manual_details_text = tk.StringVar()
         self._build()
         self._render()
         root.after(100, self._poll_events)
@@ -78,7 +88,9 @@ class BalanceTransferApp:
         self.notebook.pack(fill="both", expand=True)
         reconciliation_tab = ttk.Frame(self.notebook)
         initial_balances_tab = ttk.Frame(self.notebook)
+        manual_reconciliation_tab = ttk.Frame(self.notebook)
         self.notebook.add(reconciliation_tab, text="Odin Reconciliation")
+        self.notebook.add(manual_reconciliation_tab, text="Manual Reconciliation Review")
         self.notebook.add(initial_balances_tab, text="InitialBalances Transfer")
 
         scroller = ScrollableFrame(reconciliation_tab, padding=22)
@@ -183,12 +195,30 @@ class BalanceTransferApp:
             text="Open match audit",
             command=lambda: self._open_result("audit"),
         )
+        self.open_audit_control_button = ttk.Button(
+            result_actions,
+            text="Open audit control",
+            command=lambda: self._open_result("audit_control"),
+        )
+        self.open_candidates_button = ttk.Button(
+            result_actions,
+            text="Open candidate matches",
+            command=lambda: self._open_result("candidate_matches"),
+        )
+        self.open_run_summary_button = ttk.Button(
+            result_actions,
+            text="Open run summary",
+            command=lambda: self._open_result("run_summary"),
+        )
         for index, button in enumerate(
             [
                 self.open_folder_button,
                 self.open_transfer_button,
                 self.open_review_button,
                 self.open_audit_button,
+                self.open_audit_control_button,
+                self.open_candidates_button,
+                self.open_run_summary_button,
             ]
         ):
             button.grid(
@@ -206,7 +236,117 @@ class BalanceTransferApp:
             text="Source files are never changed. Results are saved in a new timestamped folder.",
             foreground="#555555",
         ).pack(anchor="w", pady=(14, 0))
+        self._build_manual_reconciliation_tab(manual_reconciliation_tab)
         self._build_initial_balances_tab(initial_balances_tab)
+
+    def _build_manual_reconciliation_tab(self, parent: ttk.Frame) -> None:
+        scroller = ScrollableFrame(parent, padding=22)
+        scroller.pack(fill="both", expand=True)
+        outer = scroller.content
+        ttk.Label(
+            outer,
+            text="Manual Reconciliation Review",
+            font=("Segoe UI", 18, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            outer,
+            text=(
+                "Compare the original automated transfer with a manually reconciled copy "
+                "before using it for InitialBalances."
+            ),
+        ).pack(anchor="w", pady=(3, 20))
+
+        files = ttk.LabelFrame(outer, text="Review files", padding=14)
+        files.pack(fill="x")
+        files.columnconfigure(1, weight=1)
+        self._file_row(
+            files,
+            0,
+            "Original transfer",
+            self.manual_original_text,
+            self._choose_manual_original,
+        )
+        self._file_row(
+            files,
+            1,
+            "Edited transfer",
+            self.manual_edited_text,
+            self._choose_manual_edited,
+        )
+        self._file_row(
+            files,
+            2,
+            "Save results in",
+            self.output_text,
+            self._choose_output,
+        )
+
+        actions = ttk.Frame(outer)
+        actions.pack(fill="x", pady=14)
+        self.manual_review_button = ttk.Button(
+            actions,
+            text="Review edited transfer",
+            command=self._start_manual_review,
+        )
+        self.manual_review_button.grid(row=0, column=0, sticky="ew")
+        actions.columnconfigure(0, weight=1)
+        self.manual_progress = ttk.Progressbar(actions, mode="indeterminate", length=180)
+        self.manual_progress.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+
+        results = ttk.LabelFrame(outer, text="Status and results", padding=14)
+        results.pack(fill="both", expand=True)
+        ttk.Label(
+            results,
+            textvariable=self.manual_status_text,
+            font=("Segoe UI", 11, "bold"),
+        ).pack(anchor="w")
+        ttk.Label(
+            results,
+            textvariable=self.manual_details_text,
+            justify="left",
+            wraplength=680,
+        ).pack(anchor="w", pady=(10, 14))
+        result_actions = ttk.Frame(results)
+        result_actions.pack(fill="x")
+        self.manual_open_folder_button = ttk.Button(
+            result_actions,
+            text="Open results folder",
+            command=lambda: self._open_manual_result("folder"),
+        )
+        self.manual_open_delta_button = ttk.Button(
+            result_actions,
+            text="Open delta audit",
+            command=lambda: self._open_manual_result("delta"),
+        )
+        self.manual_open_summary_button = ttk.Button(
+            result_actions,
+            text="Open summary",
+            command=lambda: self._open_manual_result("summary"),
+        )
+        for index, button in enumerate(
+            [
+                self.manual_open_folder_button,
+                self.manual_open_delta_button,
+                self.manual_open_summary_button,
+            ]
+        ):
+            button.grid(
+                row=index // 2,
+                column=index % 2,
+                sticky="ew",
+                padx=(0 if index % 2 == 0 else 8, 0),
+                pady=(0 if index < 2 else 8, 0),
+            )
+        result_actions.columnconfigure(0, weight=1)
+        result_actions.columnconfigure(1, weight=1)
+        ttk.Label(
+            outer,
+            text=(
+                "Manual resolutions are expected. Changed automated balances, identity "
+                "fields, and family codes are highlighted for audit review."
+            ),
+            foreground="#555555",
+        ).pack(anchor="w", pady=(14, 0))
 
     def _build_initial_balances_tab(self, parent: ttk.Frame) -> None:
         scroller = ScrollableFrame(parent, padding=22)
@@ -304,12 +444,24 @@ class BalanceTransferApp:
             text="Open exceptions",
             command=lambda: self._open_initial_result("exceptions"),
         )
+        self.initial_open_audit_control_button = ttk.Button(
+            result_actions,
+            text="Open audit control",
+            command=lambda: self._open_initial_result("audit_control"),
+        )
+        self.initial_open_run_summary_button = ttk.Button(
+            result_actions,
+            text="Open run summary",
+            command=lambda: self._open_initial_result("run_summary"),
+        )
         for index, button in enumerate(
             [
                 self.initial_open_folder_button,
                 self.initial_open_processed_button,
                 self.initial_open_audit_button,
                 self.initial_open_exceptions_button,
+                self.initial_open_audit_control_button,
+                self.initial_open_run_summary_button,
             ]
         ):
             button.grid(
@@ -370,6 +522,27 @@ class BalanceTransferApp:
             self.output_text.set(selected)
             self.controller.select_output_root(Path(selected))
             self.initial_controller.select_output_root(Path(selected))
+            self.manual_controller.select_output_root(Path(selected))
+            self._render()
+
+    def _choose_manual_original(self) -> None:
+        selected = filedialog.askopenfilename(
+            title="Select original automated transfer CSV",
+            filetypes=[("CSV files", "*.csv")],
+        )
+        if selected:
+            self.manual_original_text.set(selected)
+            self.manual_controller.select_original_transfer(Path(selected))
+            self._render()
+
+    def _choose_manual_edited(self) -> None:
+        selected = filedialog.askopenfilename(
+            title="Select manually reconciled transfer CSV",
+            filetypes=[("CSV files", "*.csv")],
+        )
+        if selected:
+            self.manual_edited_text.set(selected)
+            self.manual_controller.select_edited_transfer(Path(selected))
             self._render()
 
     def _choose_initial_transfer(self) -> None:
@@ -472,9 +645,15 @@ class BalanceTransferApp:
         self._render()
         self._run_worker(
             "initial_validated",
-            lambda: inspect_initial_balances_inputs(
-                state.transfer_path,  # type: ignore[arg-type]
-                state.initial_balances_path,  # type: ignore[arg-type]
+            lambda: (
+                inspect_initial_balances_inputs(
+                    state.transfer_path,  # type: ignore[arg-type]
+                    state.initial_balances_path,  # type: ignore[arg-type]
+                ),
+                preflight_initial_balances_transfer(
+                    state.transfer_path,  # type: ignore[arg-type]
+                    state.initial_balances_path,  # type: ignore[arg-type]
+                ),
             ),
             "initial_error",
         )
@@ -490,6 +669,19 @@ class BalanceTransferApp:
                 output_root=state.output_root,  # type: ignore[arg-type]
             ),
             "initial_error",
+        )
+
+    def _start_manual_review(self) -> None:
+        state = self.manual_controller.begin_review()
+        self._render()
+        self._run_worker(
+            "manual_reviewed",
+            lambda: run_manual_reconciliation_workflow(
+                original_transfer_path=state.original_transfer_path,  # type: ignore[arg-type]
+                edited_transfer_path=state.edited_transfer_path,  # type: ignore[arg-type]
+                output_root=state.output_root,  # type: ignore[arg-type]
+            ),
+            "manual_error",
         )
 
     def _show_preview(self) -> None:
@@ -518,7 +710,8 @@ class BalanceTransferApp:
                         result.summary.exceptions,
                     )
                 elif name == "initial_validated":
-                    self.initial_controller.validation_succeeded(payload)  # type: ignore[arg-type]
+                    inspection, preflight = payload  # type: ignore[misc]
+                    self.initial_controller.validation_succeeded(inspection, preflight)
                 elif name == "initial_processed":
                     self.initial_controller.processing_succeeded(payload)  # type: ignore[arg-type]
                     result = self.initial_controller.state.result
@@ -540,8 +733,34 @@ class BalanceTransferApp:
                             APP_TITLE,
                             "InitialBalances transfer and integrity audit completed successfully.",
                         )
+                elif name == "manual_reviewed":
+                    self.manual_controller.review_succeeded(payload)  # type: ignore[arg-type]
+                    result = self.manual_controller.state.result
+                    self.logger.info(
+                        "Manual reconciliation review completed: status=%s manual=%s "
+                        "high_risk_balance=%s invalid=%s",
+                        result.summary.status,
+                        result.summary.manual_resolutions,
+                        result.summary.changed_automated_balances
+                        + result.summary.cleared_automated_balances,
+                        result.summary.invalid_manual_amounts,
+                    )
+                    if result.summary.status == "BLOCKED":
+                        messagebox.showwarning(
+                            APP_TITLE,
+                            "The edited transfer has invalid balances. Open the delta audit, "
+                            "fix the edited CSV, and run the review again.",
+                        )
+                    elif result.summary.status == "REVIEW":
+                        messagebox.showinfo(
+                            APP_TITLE,
+                            "Manual reconciliation review completed with high-risk edits. "
+                            "Open the delta audit before using the edited transfer.",
+                        )
                 elif name == "initial_error":
                     self.initial_controller.failed(friendly_error(payload))  # type: ignore[arg-type]
+                elif name == "manual_error":
+                    self.manual_controller.failed(friendly_error(payload))  # type: ignore[arg-type]
                 else:
                     self.controller.failed(friendly_error(payload))  # type: ignore[arg-type]
                 self._render()
@@ -558,11 +777,30 @@ class BalanceTransferApp:
             "processed": result.summary.output_paths.processed,
             "audit": result.summary.output_paths.audit,
             "exceptions": result.summary.output_paths.exceptions,
+            "audit_control": result.summary.output_paths.audit_control,
+            "run_summary": result.summary.output_paths.run_summary,
         }
         try:
             path = targets[target]
             if path is not None:
-                open_path(path)
+                if target == "candidate_matches":
+                    CandidateMatchesWindow(self.root, path)
+                else:
+                    open_path(path)
+        except Exception as error:
+            messagebox.showerror(APP_TITLE, friendly_error(error))
+
+    def _open_manual_result(self, target: str) -> None:
+        result = self.manual_controller.state.result
+        if result is None:
+            return
+        targets = {
+            "folder": result.run_dir,
+            "delta": result.summary.output_paths.delta_audit,
+            "summary": result.summary.output_paths.summary,
+        }
+        try:
+            open_path(targets[target])
         except Exception as error:
             messagebox.showerror(APP_TITLE, friendly_error(error))
 
@@ -575,6 +813,9 @@ class BalanceTransferApp:
             "transfer": result.summary.output_paths.transfer,
             "review": result.summary.output_paths.manual_review_exceptions,
             "audit": result.summary.output_paths.match_audit,
+            "audit_control": result.summary.output_paths.audit_control,
+            "candidate_matches": result.summary.output_paths.candidate_matches,
+            "run_summary": result.summary.output_paths.run_summary,
         }
         try:
             path = targets[target]
@@ -611,6 +852,7 @@ class BalanceTransferApp:
                 f"Matching profile: {summary.profile_name}\n"
                 f"All exceptions: {summary.exceptions}\n"
                 f"Malformed Odin rows: {summary.malformed}\n"
+                f"Audit-control status: {summary.audit_control_status}\n"
                 f"Lunchtab output rows: {summary.lunchtab_rows}"
                 f"{warning}\n\nSaved to: {state.result.run_dir}"
             )
@@ -629,6 +871,42 @@ class BalanceTransferApp:
         self.open_transfer_button.configure(state=result_state)
         self.open_review_button.configure(state=result_state)
         self.open_audit_button.configure(state=result_state)
+        self.open_audit_control_button.configure(state=result_state)
+        self.open_candidates_button.configure(state=result_state)
+        self.open_run_summary_button.configure(state=result_state)
+
+        manual_state = self.manual_controller.state
+        manual_busy = manual_state.phase == ManualReconciliationPhase.REVIEWING
+        self.manual_review_button.configure(
+            state="normal" if manual_state.can_review else "disabled"
+        )
+        if manual_busy:
+            self.manual_progress.start(10)
+        else:
+            self.manual_progress.stop()
+        self.manual_status_text.set(manual_state.message)
+        if manual_state.result:
+            summary = manual_state.result.summary
+            self.manual_details_text.set(
+                f"Review status: {summary.status}\n"
+                f"Original transfer rows: {summary.original_rows}\n"
+                f"Edited transfer rows: {summary.edited_rows}\n"
+                f"Unchanged automated matches: {summary.unchanged_automated_matches}\n"
+                f"Manual resolutions: {summary.manual_resolutions}\n"
+                f"Changed automated balances: {summary.changed_automated_balances}\n"
+                f"Cleared automated balances: {summary.cleared_automated_balances}\n"
+                f"Invalid manual amounts: {summary.invalid_manual_amounts}\n"
+                f"Family-code changes: {summary.family_code_changes}\n"
+                f"Identity-field changes: {summary.identity_field_changes}\n"
+                f"Other field changes: {summary.other_field_changes}\n\n"
+                f"Saved to: {manual_state.result.run_dir}"
+            )
+        else:
+            self.manual_details_text.set("")
+        manual_result_state = "normal" if manual_state.result else "disabled"
+        self.manual_open_folder_button.configure(state=manual_result_state)
+        self.manual_open_delta_button.configure(state=manual_result_state)
+        self.manual_open_summary_button.configure(state=manual_result_state)
 
         initial_state = self.initial_controller.state
         initial_busy = initial_state.phase in {
@@ -658,22 +936,47 @@ class BalanceTransferApp:
                 f"Matched source rows: {summary.matched_source_rows}\n"
                 f"Updated families: {summary.updated_families}\n"
                 f"Exceptions: {summary.exceptions}\n"
+                f"Audit-control status: {summary.audit_control_status}\n"
                 f"Applied total: {summary.applied_total}"
                 f"{blocked}\n\nSaved to: {initial_state.result.run_dir}"
             )
         elif initial_state.inspection:
             inspection = initial_state.inspection
-            self.initial_details_text.set(
-                f"Transfer rows: {inspection.transfer_rows}\n"
-                f"Populated balance rows: {inspection.populated_balance_rows}\n"
-                f"InitialBalances rows: {inspection.initial_balance_rows}"
-            )
+            if initial_state.preflight:
+                preflight = initial_state.preflight
+                status = "BLOCKED" if preflight.blocked else "READY"
+                reasons = (
+                    "\n".join(
+                        f"  - {reason}: {count}"
+                        for reason, count in preflight.exception_reasons.items()
+                    )
+                    or "  - None"
+                )
+                self.initial_details_text.set(
+                    f"Preflight result: {status}\n"
+                    f"Transfer rows: {preflight.transfer_rows}\n"
+                    f"Populated balance rows: {preflight.populated_balance_rows}\n"
+                    f"Matched source rows: {preflight.matched_source_rows}\n"
+                    f"Updated families: {preflight.updated_families}\n"
+                    f"Exceptions: {preflight.exceptions}\n"
+                    f"Applied total if run: {preflight.applied_total}\n"
+                    f"Blocked total if run: {preflight.blocked_total}\n"
+                    f"Exception reasons:\n{reasons}"
+                )
+            else:
+                self.initial_details_text.set(
+                    f"Transfer rows: {inspection.transfer_rows}\n"
+                    f"Populated balance rows: {inspection.populated_balance_rows}\n"
+                    f"InitialBalances rows: {inspection.initial_balance_rows}"
+                )
         else:
             self.initial_details_text.set("")
         initial_result_state = "normal" if initial_state.result else "disabled"
         self.initial_open_folder_button.configure(state=initial_result_state)
         self.initial_open_audit_button.configure(state=initial_result_state)
         self.initial_open_exceptions_button.configure(state=initial_result_state)
+        self.initial_open_audit_control_button.configure(state=initial_result_state)
+        self.initial_open_run_summary_button.configure(state=initial_result_state)
         self.initial_open_processed_button.configure(
             state=(
                 "normal"

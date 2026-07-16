@@ -7,8 +7,10 @@ from pathlib import Path
 from odin_lunchtab.managed import InputInspection, ManagedRunResult
 from odin_lunchtab.initial_balances import (
     InitialBalancesInspection,
+    InitialBalancesPreflight,
     InitialBalancesRunResult,
 )
+from odin_lunchtab.manual_reconciliation import ManualReconciliationRunResult
 from odin_lunchtab.profiles import LEGACY_DEFAULT_PROFILE, MatchingProfile
 
 
@@ -165,6 +167,7 @@ class InitialBalancesState:
     output_root: Path | None = None
     phase: InitialBalancesPhase = InitialBalancesPhase.EMPTY
     inspection: InitialBalancesInspection | None = None
+    preflight: InitialBalancesPreflight | None = None
     result: InitialBalancesRunResult | None = None
     message: str = "Select the reconciled transfer and InitialBalances CSV files."
 
@@ -202,17 +205,30 @@ class InitialBalancesController:
             self.state,
             phase=InitialBalancesPhase.VALIDATING,
             inspection=None,
+            preflight=None,
             result=None,
             message="Validating InitialBalances inputs…",
         )
         return self.state
 
-    def validation_succeeded(self, inspection: InitialBalancesInspection) -> InitialBalancesState:
+    def validation_succeeded(
+        self,
+        inspection: InitialBalancesInspection,
+        preflight: InitialBalancesPreflight | None = None,
+    ) -> InitialBalancesState:
+        message = (
+            "Preflight complete: transfer would be blocked. Review the details before running."
+            if preflight is not None and preflight.blocked
+            else "Preflight complete: files are ready to transfer."
+            if preflight is not None
+            else "Files are valid and ready to transfer."
+        )
         self.state = replace(
             self.state,
             phase=InitialBalancesPhase.VALID,
             inspection=inspection,
-            message="Files are valid and ready to transfer.",
+            preflight=preflight,
+            message=message,
         )
         return self.state
 
@@ -261,6 +277,7 @@ class InitialBalancesController:
                 else self.state.initial_balances_path
             ),
             "inspection": None,
+            "preflight": None,
             "result": None,
         }
         both_selected = (
@@ -273,6 +290,121 @@ class InitialBalancesController:
             "Validate the selected files."
             if both_selected
             else "Select the reconciled transfer and InitialBalances CSV files."
+        )
+        self.state = replace(self.state, **values)
+        return self.state
+
+
+class ManualReconciliationPhase(Enum):
+    EMPTY = "empty"
+    READY_TO_REVIEW = "ready_to_review"
+    REVIEWING = "reviewing"
+    COMPLETE = "complete"
+    BLOCKED = "blocked"
+    ERROR = "error"
+
+
+@dataclass(frozen=True)
+class ManualReconciliationState:
+    original_transfer_path: Path | None = None
+    edited_transfer_path: Path | None = None
+    output_root: Path | None = None
+    phase: ManualReconciliationPhase = ManualReconciliationPhase.EMPTY
+    result: ManualReconciliationRunResult | None = None
+    message: str = "Select the original automated transfer and edited transfer CSV files."
+
+    @property
+    def can_review(self) -> bool:
+        return (
+            self.original_transfer_path is not None
+            and self.edited_transfer_path is not None
+            and self.output_root is not None
+            and self.phase != ManualReconciliationPhase.REVIEWING
+        )
+
+
+class ManualReconciliationController:
+    def __init__(self, output_root: Path) -> None:
+        self.state = ManualReconciliationState(output_root=output_root)
+
+    def select_original_transfer(self, path: Path) -> ManualReconciliationState:
+        return self._change_input(original_transfer_path=path)
+
+    def select_edited_transfer(self, path: Path) -> ManualReconciliationState:
+        return self._change_input(edited_transfer_path=path)
+
+    def select_output_root(self, path: Path) -> ManualReconciliationState:
+        self.state = replace(self.state, output_root=path)
+        return self.state
+
+    def begin_review(self) -> ManualReconciliationState:
+        if not self.state.can_review:
+            raise RuntimeError("Both transfer CSV files must be selected before review.")
+        self.state = replace(
+            self.state,
+            phase=ManualReconciliationPhase.REVIEWING,
+            result=None,
+            message="Reviewing manual reconciliation changes…",
+        )
+        return self.state
+
+    def review_succeeded(
+        self,
+        result: ManualReconciliationRunResult,
+    ) -> ManualReconciliationState:
+        phase = (
+            ManualReconciliationPhase.BLOCKED
+            if result.summary.status == "BLOCKED"
+            else ManualReconciliationPhase.COMPLETE
+        )
+        message = (
+            "Manual reconciliation review blocked. Fix invalid balances before import."
+            if result.summary.status == "BLOCKED"
+            else "Manual reconciliation review complete."
+        )
+        self.state = replace(self.state, phase=phase, result=result, message=message)
+        return self.state
+
+    def failed(self, message: str) -> ManualReconciliationState:
+        self.state = replace(
+            self.state,
+            phase=ManualReconciliationPhase.ERROR,
+            message=message,
+        )
+        return self.state
+
+    def _change_input(
+        self,
+        *,
+        original_transfer_path: Path | None = None,
+        edited_transfer_path: Path | None = None,
+    ) -> ManualReconciliationState:
+        values = {
+            "original_transfer_path": (
+                original_transfer_path
+                if original_transfer_path is not None
+                else self.state.original_transfer_path
+            ),
+            "edited_transfer_path": (
+                edited_transfer_path
+                if edited_transfer_path is not None
+                else self.state.edited_transfer_path
+            ),
+            "result": None,
+        }
+        both_selected = (
+            values["original_transfer_path"] is not None
+            and values["edited_transfer_path"] is not None
+        )
+        values["phase"] = (
+            ManualReconciliationPhase.READY_TO_REVIEW
+            if both_selected
+            else ManualReconciliationPhase.EMPTY
+        )
+        values["message"] = (
+            "Review the edited transfer changes."
+            if both_selected
+            else "Select the original automated transfer and edited transfer CSV files."
         )
         self.state = replace(self.state, **values)
         return self.state

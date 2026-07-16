@@ -16,6 +16,37 @@ uv sync --locked
 uv run odin-lunchtab-gui
 ```
 
+## Sandbox data generator
+
+For non-live testing, launch the separate sandbox utility:
+
+```powershell
+uv run odin-lunchtab-sandbox
+```
+
+The sandbox app creates deterministic synthetic test packs containing:
+
+- `Sandbox Odin Account Balance Report.xlsx`
+- `Sandbox Lunchtab Users.csv`
+- `Sandbox InitialBalances.csv`
+- `Sandbox Expected Summary.json`
+- `sandbox-manifest.json`
+
+Use the preset selector for clean baseline data, reconciliation exceptions, preferred-name
+ambiguity, malformed Odin rows, InitialBalances blockers, or a mixed stress set. Row
+counts, identifier conventions, family grouping, balance ranges, exception volumes, output
+folder, and random seed can be edited before generation.
+
+Identifier conventions are configured separately for Odin IDs, LunchTab login barcodes, and
+LunchTab family codes. Family codes can use their own prefix, starting number, and padding
+so they can model venue exports where the family-code digits are unrelated to Odin IDs.
+
+Choose **Generate + Verify** to immediately run the generated files through the production
+reconciliation and InitialBalances workflows. Verification results are written under the
+generated sandbox run folder. The generated data uses synthetic names, identifiers, email
+addresses under `sandbox.invalid`, family codes, and balances; it should not contain live
+student or family data.
+
 The user selects:
 
 1. The Odin `.xlsx` account balance report.
@@ -32,14 +63,31 @@ Documents\Odin Lunchtab Transfers
 Each successful run creates a new `YYYY-MM-DD_HHMMSS` folder. Results are first written to
 a private staging folder and published only after every report and the manifest succeed.
 The completion screen provides buttons to open the folder, transfer CSV, manual-review CSV,
-and accepted-match audit.
+accepted-match audit, audit-control summary, candidate-match report, and run summary.
 
 The generated `run-manifest.json` records application version, timestamps, source
-filenames, summary counts, and generated filenames. It does not contain student rows,
-balances, or absolute source paths.
+filenames, source-file SHA-256 hashes, summary counts, generated filenames, and generated
+artifact SHA-256 hashes. It does not contain student rows, balances, or absolute source
+paths.
 
 Diagnostic logs are stored under `%LOCALAPPDATA%\Odin Lunchtab\logs` and contain only
 operational events and summary counts.
+
+### Manual reconciliation review
+
+The **Manual Reconciliation Review** tab supports the expected staff workflow where
+exception accounts are manually resolved after the automated Odin reconciliation:
+
+1. Select the original automated `Processed - Odin to Lunchtab Balance Transfer.csv`.
+2. Select the staff-edited copy of that same transfer CSV.
+3. Choose **Review edited transfer**.
+
+The review writes a timestamped result folder with a delta audit, short summary, and
+`manual-reconciliation-manifest.json`. Normal manual resolutions are rows where a
+previously blank `OdinBalanceAmount` was filled in. Changed automated balances, cleared
+automated balances, changed family codes, changed identity fields, and other non-balance
+edits are highlighted for audit review. Invalid manual amounts block downstream use until
+corrected.
 
 ### InitialBalances transfer
 
@@ -48,7 +96,9 @@ reconciliation:
 
 1. Select the reconciled `Processed - Odin to Lunchtab Balance Transfer.csv`.
 2. Select the `InitialBalances...csv` downloaded from the Lunchtab transaction page.
-3. Validate, then choose **Transfer and audit**.
+3. Validate. Validation also runs a non-writing preflight preview showing whether the
+   transfer would be ready or blocked.
+4. Choose **Transfer and audit** when ready to create the formal timestamped result folder.
 
 The reconciled transfer must contain `DefaultFamilyCode` and `OdinBalanceAmount`.
 The InitialBalances export must contain exactly:
@@ -62,9 +112,10 @@ existing Amount. Blank target amounts are treated as zero. Source rows with blan
 unmatched, or duplicate required family codes block creation of the import file.
 
 Every run creates a timestamped results folder containing a family-level audit, an exception
-report, and `initial-balances-manifest.json`. A clean run also creates
-`Processed - {original InitialBalances filename}`. A blocked run deliberately omits that
-processed import while retaining the audit evidence needed for correction.
+report, an audit-control summary, a run summary, and `initial-balances-manifest.json`. A
+clean run also creates `Processed - {original InitialBalances filename}`. A blocked run
+deliberately omits that processed import while retaining the audit evidence needed for
+correction.
 
 The completion counts describe different levels of aggregation:
 
@@ -78,6 +129,19 @@ Multiple source rows can share one family, so updated families may be lower than
 source rows. A family with a net aggregate of zero is still counted as updated even though
 its target `Amount` does not change numerically. Control totals in the manifest and audit
 must agree before the processed import is published.
+
+`InitialBalances Audit Control Summary.csv` provides the operator-facing traceability
+ledger. It separates applied balances, blocked balances, exception reason counts, invalid
+or excluded source amounts, and control-total pass/fail rows. Blocked balances are reported
+once per affected family code, even when multiple exception reasons apply, so manual review
+can inspect reasons without double-counting dollars.
+
+`InitialBalances Run Summary.md` provides a short operator-readable status page with the
+run status, key counts and totals, important artifacts, and recommended next action.
+
+The preflight preview is intentionally non-writing. It reports expected applied rows,
+updated families, exception counts, applied total, blocked total, and exception reasons
+before the operator creates a formal InitialBalances run.
 
 CSV inputs support UTF-8 (with or without a BOM), Windows-1252, and BOM-marked UTF-16
 little- or big-endian files. Unsupported, ambiguous, or binary-looking files are rejected
@@ -186,6 +250,8 @@ The workflow writes:
 - A complete exceptions CSV.
 - `Manual Review Exceptions - Odin to Lunchtab Balance Transfer.csv`.
 - `Accepted Match Audit - Odin to Lunchtab Balance Transfer.csv`.
+- `Reconciliation Audit Control Summary.csv`.
+- `Reconciliation Run Summary.md`.
 - `run-manifest.json` for desktop managed runs.
 
 The transfer CSV adds `OdinBalanceAmount` immediately after
@@ -195,9 +261,72 @@ records, which are likely legacy or closed accounts.
 The selected Lunchtab users export must also contain `DefaultFamilyCode`; this column is
 preserved in the transfer CSV for the InitialBalances stage.
 
-The match audit identifies the profile, rule, transformed identifier, and destination for
-each accepted balance. Matching metadata is not added to the Lunchtab import CSV. The
-manifest records the profile schema version and per-rule totals.
+The match audit identifies the profile, rule, transformed identifier, destination, and
+accepted `OdinBalanceAmount` for each accepted balance. Matching metadata is not added to
+the Lunchtab import CSV. The manifest records the profile schema version, per-rule totals,
+audit-control status, and audit-control report filename.
+
+`Reconciliation Audit Control Summary.csv` summarizes valid Odin source balances, accepted
+matches by method and rule, exceptions by reason, malformed or unparseable rows excluded
+from dollar controls, and a pass/fail row verifying that valid Odin source dollars equal
+matched dollars plus valid exception dollars.
+
+`Reconciliation Run Summary.md` provides a short operator-readable status page with the
+matching profile, key counts, important artifacts, and recommended next action before
+continuing to manual reconciliation or InitialBalances.
+
+`Manual Review Candidate Matches.csv` is an advisory helper for exception reconciliation.
+For each manual-review exception, it ranks possible LunchTab candidates using evidence such
+as ID/barcode matches, ExternalId matches, email usernames, surname matches, and
+first/preferred-name compatibility. The desktop app's **Open candidate matches** button
+opens a searchable viewer with a confidence filter, an **Actionable only** filter, and
+an **Ambiguous only** filter, plus copyable evidence details. Actionable rows have a unique
+transfer row, a blank current `OdinBalanceAmount`, and a suggested Odin balance. Ambiguous
+groups are Odin exceptions that have more than one actionable candidate, so staff can slow
+down and choose deliberately. The viewer does not change the transfer file. When generated
+by a reconciliation run, the report also
+includes the candidate's transfer CSV row number, current `OdinBalanceAmount`, suggested
+Odin balance, and trace status so staff can manually audit the edit location before
+updating `OdinBalanceAmount`. The viewer can also export two advisory checklist CSVs:
+`Manual Edit Checklist - Actionable Candidates.csv` for single-candidate manual edits and
+`Manual Edit Checklist - Ambiguous Candidates.csv` for cases where staff must choose among
+multiple actionable candidates. The checklist includes a `Selected` column that can be used
+by the viewer's **Create from selections/checklist...** action to validate that selected rows are
+actionable and that each ambiguous Odin exception has exactly one chosen candidate.
+Validated selections are written to `Proposed Edited Transfer - Candidate Selections.csv`
+plus `Proposed Transfer Selection Audit.csv`; the original transfer CSV remains unchanged.
+When the candidate report is opened from a standard run folder, the viewer offers to use
+the matching `Processed - Odin to Lunchtab Balance Transfer.csv` in that folder so staff do
+not have to hunt for the source transfer file. If that file is missing or the operator
+declines it, the viewer asks for the transfer CSV explicitly. Proposed-transfer files are
+written to the output folder chosen by the operator; this step does not create a separate
+timestamped run folder. After creation, **Open output folder** opens the selected folder.
+
+Internally, candidate review rows are grouped by Odin exception so the workflow can track
+selected, skipped, and unresolved exception accounts. This supports the current checklist
+workflow and prepares the viewer for direct in-app candidate selection. The candidate
+viewer can mark an actionable candidate as selected, skip that candidate's exception group,
+or clear the group while showing selected/skipped/unresolved progress. **Review mode**
+switches the table to actionable rows and a narrower decision-focused column layout.
+Proposed transfer creation can use those in-app selections directly; the exported checklist
+workflow remains available as a fallback for offline review. In-app selection runs also write
+`Candidate Review Decisions.csv` so selected, skipped, and unresolved candidate groups can
+be audited after the proposed transfer is created.
+
+### Manual reconciliation audit artifacts
+
+When staff manually edit the reconciled transfer CSV to resolve exception accounts, the
+edited file should be audited before it is used for InitialBalances. The manual
+reconciliation audit compares the original automated transfer to the edited transfer and
+creates:
+
+- `Manual Reconciliation Delta Audit.csv`
+- `Manual Reconciliation Summary.md`
+
+The audit distinguishes normal manual resolutions, where a previously blank
+`OdinBalanceAmount` is filled in, from higher-risk edits such as changed automated balances,
+cleared automated balances, changed `DefaultFamilyCode` values, or changed LunchTab
+identity fields. Invalid manual amounts block downstream use until corrected.
 
 ## Tests and quality checks
 
