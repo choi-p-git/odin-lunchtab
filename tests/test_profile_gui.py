@@ -196,8 +196,9 @@ def test_responsive_windows_keep_primary_actions_mapped() -> None:
     assert app.validate_button.winfo_ismapped()
     assert app.process_button.winfo_ismapped()
     assert app.notebook.tab(0, "text") == "Odin Reconciliation"
-    assert app.notebook.tab(1, "text") == "InitialBalances Transfer"
-    app.notebook.select(1)
+    assert app.notebook.tab(1, "text") == "Manual Reconciliation Review"
+    assert app.notebook.tab(2, "text") == "InitialBalances Transfer"
+    app.notebook.select(2)
     root.update_idletasks()
     assert app.initial_validate_button.winfo_ismapped()
     assert app.initial_process_button.winfo_ismapped()
